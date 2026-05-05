@@ -18,7 +18,7 @@ describe("OpenCode sync adapter", () => {
       title: "Build feature",
       parentID: "ses_parent",
       time: { created: 1, updated: 2 },
-    } as Session
+    } as unknown as Session
 
     const result = fromOpenCodeSession(session)
 
@@ -36,6 +36,18 @@ describe("OpenCode sync adapter", () => {
       time: { created: 1, updated: 2 },
     })
     expect(toOpenCodeSessionCompat(result)).toBe(session)
+  })
+
+  test("preserves backendId from session payloads", () => {
+    const session = {
+      id: "ses_codex_1",
+      title: "Codex session",
+      backendId: "codex",
+      time: { created: 1, updated: 2 },
+    } as unknown as Session
+
+    const result = fromOpenCodeSession(session)
+    expect(result.backendId).toBe("codex")
   })
 
   test("maps message attribution from OpenCode provider/model/agent/variant fields", () => {

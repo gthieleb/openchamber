@@ -580,12 +580,69 @@ export const registerOpenCodeProxy = (app, deps) => {
 
   const collectNonOpenCodeSessions = async (req) => {
     const codexRt = backendRegistry.getRuntime('codex');
-    return codexRt?.listSessions ? await codexRt.listSessions({
+    const sessions = codexRt?.listSessions ? await codexRt.listSessions({
       directory: typeof req.query?.directory === 'string' ? req.query.directory : undefined,
       archived: false,
       roots: req.query?.roots !== 'false',
       limit: typeof req.query?.limit === 'string' ? Number(req.query.limit) : undefined,
     }) : [];
+    if (!Array.isArray(sessions)) {
+      return [];
+    }
+
+    for (const session of sessions) {
+      if (session && typeof session.id === 'string' && session.id.trim().length > 0) {
+        await sessionBindingsRuntime.upsertBinding({
+          sessionId: session.id,
+          backendId: 'codex',
+          backendSessionId: session.id,
+          directory: typeof session.directory === 'string'
+            ? session.directory
+            : (typeof session.cwd === 'string' ? session.cwd : null),
+        });
+      }
+    }
+
+    return sessions;
+  };
+
+  const repairNonOpenCodeBinding = async (binding, directory) => {
+    if (!binding || binding.backendId !== 'opencode') {
+      return binding;
+    }
+
+    for (const descriptor of backendRegistry.listBackends()) {
+      if (descriptor.id === 'opencode' || !backendRegistry.isBackendSelectable(descriptor.id)) {
+        continue;
+      }
+      const runtime = getBackendRuntime(descriptor.id);
+      if (!runtime?.getSession) {
+        continue;
+      }
+      const session = await runtime.getSession({
+        sessionID: binding.backendSessionId,
+        directory: directory || binding.directory,
+      }).catch(() => null);
+      if (!session) {
+        continue;
+      }
+      return await sessionBindingsRuntime.upsertBinding({
+        sessionId: binding.sessionId,
+        backendId: descriptor.id,
+        backendSessionId: typeof session.id === 'string' ? session.id : binding.backendSessionId,
+        directory: typeof session.directory === 'string'
+          ? session.directory
+          : (typeof session.cwd === 'string' ? session.cwd : binding.directory),
+      });
+    }
+
+    return binding;
+  };
+
+  const getEffectiveBindingForRequest = async (sessionId, req) => {
+    const binding = await sessionBindingsRuntime.getEffectiveBinding(sessionId);
+    const directory = typeof req.query?.directory === 'string' ? req.query.directory : binding?.directory;
+    return repairNonOpenCodeBinding(binding, directory);
   };
 
   app.get('/api/session', async (req, res, next) => {
@@ -715,7 +772,7 @@ export const registerOpenCodeProxy = (app, deps) => {
         return next();
       }
 
-      const binding = await sessionBindingsRuntime.getEffectiveBinding(sessionId);
+      const binding = await getEffectiveBindingForRequest(sessionId, req);
       if (!binding) {
         return next();
       }
@@ -768,7 +825,7 @@ export const registerOpenCodeProxy = (app, deps) => {
         return next();
       }
 
-      const binding = await sessionBindingsRuntime.getEffectiveBinding(sessionId);
+      const binding = await getEffectiveBindingForRequest(sessionId, req);
       if (!binding || binding.backendId !== 'codex') {
         return next(); // let OpenCode handle non-Codex sessions
       }
@@ -809,7 +866,7 @@ export const registerOpenCodeProxy = (app, deps) => {
         return next();
       }
 
-      const binding = await sessionBindingsRuntime.getEffectiveBinding(sessionId);
+      const binding = await getEffectiveBindingForRequest(sessionId, req);
       if (!binding) {
         return next();
       }

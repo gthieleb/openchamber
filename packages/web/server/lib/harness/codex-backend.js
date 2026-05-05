@@ -186,11 +186,11 @@ const normalizeCodexRecordPartIds = (record, parts) => {
   if (record?.info?.role !== 'assistant' || typeof messageId !== 'string' || parts.length === 0) {
     return parts;
   }
-  if (parts.every((part) => hasSortableCodexPartId(messageId, part.id))) {
-    return parts;
-  }
 
   return parts.map((part, index) => {
+    if (hasSortableCodexPartId(messageId, part.id)) {
+      return part;
+    }
     const previousId = part.id;
     const sequence = String(index + 1).padStart(6, '0');
     const typeKey = codexPartTypeKey(part);
@@ -201,6 +201,67 @@ const normalizeCodexRecordPartIds = (record, parts) => {
       ...(part.type === 'tool' && (!part.callID || part.callID === previousId) ? { callID: nextId } : {}),
     };
   });
+};
+
+const codexThreadItemText = (item) => {
+  if (typeof item?.text === 'string') return item.text;
+  if (Array.isArray(item?.content)) {
+    return item.content
+      .map((part) => (typeof part?.text === 'string' ? part.text : ''))
+      .filter(Boolean)
+      .join('\n');
+  }
+  if (Array.isArray(item?.summary) && item.summary.length > 0) return item.summary.join('\n');
+  return '';
+};
+
+const codexThreadItemToPart = (sessionId, messageId, item, sequence) => {
+  const itemId = typeof item?.id === 'string' && item.id.trim().length > 0 ? item.id.trim() : String(sequence);
+  const base = {
+    id: `${messageId}_${String(sequence).padStart(6, '0')}`,
+    sessionID: sessionId,
+    messageID: messageId,
+  };
+  if (item?.type === 'userMessage') {
+    return {
+      ...base,
+      id: `${base.id}_text_${itemId}`,
+      type: 'text',
+      text: codexThreadItemText(item),
+    };
+  }
+  if (item?.type === 'agentMessage') {
+    return {
+      ...base,
+      id: `${base.id}_text_${itemId}`,
+      type: 'text',
+      text: codexThreadItemText(item),
+    };
+  }
+  if (item?.type === 'reasoning') {
+    return {
+      ...base,
+      id: `${base.id}_reasoning_${itemId}`,
+      type: 'reasoning',
+      text: codexThreadItemText(item),
+    };
+  }
+  if (item?.type === 'commandExecution') {
+    const partId = `${base.id}_tool-output_${itemId}`;
+    return {
+      ...base,
+      id: partId,
+      type: 'tool',
+      tool: 'bash',
+      callID: partId,
+      state: {
+        status: item.status === 'failed' ? 'error' : item.status === 'running' ? 'running' : 'completed',
+        input: { command: typeof item.command === 'string' ? item.command : '' },
+        output: typeof item.aggregatedOutput === 'string' ? item.aggregatedOutput : '',
+      },
+    };
+  }
+  return null;
 };
 
 const cloneRecord = (record) => {
@@ -268,6 +329,17 @@ const normalizeSessionEntry = (entry) => {
     effort,
     records,
   };
+};
+
+const statusIsArchived = (status) => {
+  if (!status || typeof status !== 'object') return false;
+  return status.type === 'archived' || status.state === 'archived';
+};
+
+const toSessionTimeMillis = (value, fallback) => {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return fallback;
+  // Codex thread/list timestamps are seconds.
+  return value > 1e12 ? value : Math.floor(value * 1000);
 };
 
 const isTextLikeMime = (mime) => {
@@ -871,12 +943,224 @@ export const createCodexBackendRuntime = (dependencies) => {
     }
   };
 
+  const hydrateSessionsFromCodexList = async ({ directory, archived, limit }) => {
+    let threads = [];
+    try {
+      threads = await appServer.listThreads({
+        ...(directory ? { cwd: directory } : {}),
+        ...(typeof archived === 'boolean' ? { archived } : {}),
+        ...(limit ? { limit } : {}),
+      });
+    } catch (error) {
+      console.warn('[codex-backend] thread/list failed:', error?.message || error);
+      return;
+    }
+
+    if (!Array.isArray(threads) || threads.length === 0) {
+      return;
+    }
+
+    let changed = false;
+    for (const thread of threads) {
+      if (!thread || typeof thread !== 'object') continue;
+      const threadId = typeof thread.id === 'string' ? thread.id.trim() : '';
+      if (!threadId) continue;
+      const cwd = normalizeDirectory(thread.cwd);
+      if (directory && cwd !== directory) continue;
+      const created = toSessionTimeMillis(thread.createdAt, Date.now());
+      const updated = toSessionTimeMillis(thread.updatedAt, created);
+      const isArchived = statusIsArchived(thread.status);
+      const title = typeof thread.name === 'string' && thread.name.trim().length > 0
+        ? thread.name.trim()
+        : typeof thread.preview === 'string' && thread.preview.trim().length > 0
+          ? thread.preview.trim().slice(0, 120)
+          : 'New session';
+
+      const existing = Array.from(sessions.values()).find((entry) => entry.threadId === threadId);
+      if (existing) {
+        const nextEntry = {
+          ...existing,
+          session: {
+            ...existing.session,
+            title,
+            directory: cwd,
+            time: {
+              ...existing.session.time,
+              created: existing.session.time?.created ?? created,
+              updated,
+              ...(isArchived ? { archived: updated } : {}),
+            },
+          },
+          threadId,
+        };
+        if (JSON.stringify(nextEntry.session) !== JSON.stringify(existing.session) || nextEntry.threadId !== existing.threadId) {
+          sessions.set(existing.session.id, nextEntry);
+          changed = true;
+        }
+        continue;
+      }
+
+      const sessionId = createId(crypto);
+      sessions.set(sessionId, {
+        session: {
+          id: sessionId,
+          title,
+          directory: cwd,
+          parentID: null,
+          time: {
+            created,
+            updated,
+            ...(isArchived ? { archived: updated } : {}),
+          },
+          backendId: 'codex',
+          share: null,
+        },
+        threadId,
+        mode: DEFAULT_MODE_ID,
+        modelId: null,
+        effort: DEFAULT_EFFORT_ID,
+        records: [],
+      });
+      changed = true;
+    }
+
+    if (changed) {
+      await persist();
+    }
+  };
+
+  const hydrateEntryMessagesFromCodexThread = async (entry) => {
+    if (!entry?.threadId || entry.records.length > 0 || !appServer.readThread) {
+      return entry;
+    }
+
+    const thread = await appServer.readThread({ threadId: entry.threadId, includeTurns: true }).catch((error) => {
+      console.warn('[codex-backend] thread/read failed:', error?.message || error);
+      return null;
+    });
+    const turns = Array.isArray(thread?.turns) ? thread.turns : [];
+    if (turns.length === 0) {
+      return entry;
+    }
+
+    const effectiveModelId = typeof entry.modelId === 'string' && entry.modelId.trim().length > 0
+      ? entry.modelId
+      : await resolveDefaultModelId();
+
+    const records = [];
+    let sequence = 0;
+    let previousMessageId = null;
+    for (const turn of turns) {
+      const startedAt = toSessionTimeMillis(turn?.startedAt, entry.session.time?.created ?? Date.now());
+      const completedAt = toSessionTimeMillis(turn?.completedAt, startedAt);
+      for (const item of Array.isArray(turn?.items) ? turn.items : []) {
+        const role = item?.type === 'userMessage'
+          ? 'user'
+          : item?.type === 'agentMessage' || item?.type === 'reasoning' || item?.type === 'commandExecution'
+            ? 'assistant'
+            : null;
+        if (!role) continue;
+        sequence += 1;
+        const itemId = typeof item.id === 'string' && item.id.trim().length > 0 ? item.id.trim() : String(sequence);
+        const messageId = `msg_${entry.session.id}_${String(sequence).padStart(6, '0')}_${itemId}`;
+        const part = codexThreadItemToPart(entry.session.id, messageId, item, 1);
+        if (!part) continue;
+        records.push({
+          info: {
+            id: messageId,
+            sessionID: entry.session.id,
+            role,
+            ...(role === 'assistant' && previousMessageId ? { parentID: previousMessageId } : {}),
+            agent: entry.mode,
+            mode: entry.mode,
+            variant: entry.effort,
+            model: {
+              providerID: 'codex',
+              modelID: effectiveModelId,
+            },
+            providerID: 'codex',
+            modelID: effectiveModelId,
+            time: {
+              created: startedAt,
+              completed: completedAt,
+            },
+            ...(role === 'assistant' ? { finish: 'stop' } : {}),
+          },
+          parts: [part],
+        });
+        previousMessageId = messageId;
+      }
+    }
+
+    if (records.length === 0) {
+      return entry;
+    }
+
+    const nextEntry = {
+      ...entry,
+      modelId: effectiveModelId,
+      records,
+    };
+    await saveEntry(nextEntry);
+    return nextEntry;
+  };
+
+  const ensureEntryRecordModelAttribution = async (entry) => {
+    const needsRepair = entry.records.some((record) => {
+      const info = record?.info;
+      if (!info || typeof info !== 'object') return false;
+      const infoProvider = typeof info.providerID === 'string' && info.providerID.trim().length > 0;
+      const infoModel = typeof info.modelID === 'string' && info.modelID.trim().length > 0;
+      const modelProvider = typeof info.model?.providerID === 'string' && info.model.providerID.trim().length > 0;
+      const modelModel = typeof info.model?.modelID === 'string' && info.model.modelID.trim().length > 0;
+      return !infoProvider || !infoModel || !modelProvider || !modelModel;
+    });
+
+    if (!needsRepair) {
+      return entry;
+    }
+
+    const effectiveModelId = typeof entry.modelId === 'string' && entry.modelId.trim().length > 0
+      ? entry.modelId
+      : await resolveDefaultModelId();
+
+    const repairedRecords = entry.records.map((record) => {
+      const info = record?.info;
+      if (!info || typeof info !== 'object') {
+        return record;
+      }
+      return {
+        ...record,
+        info: {
+          ...info,
+          providerID: 'codex',
+          modelID: effectiveModelId,
+          model: {
+            ...(info.model && typeof info.model === 'object' ? info.model : {}),
+            providerID: 'codex',
+            modelID: effectiveModelId,
+          },
+        },
+      };
+    });
+
+    const nextEntry = {
+      ...entry,
+      modelId: effectiveModelId,
+      records: repairedRecords,
+    };
+    await saveEntry(nextEntry);
+    return nextEntry;
+  };
+
   const listSessions = async (input = {}) => {
     await ensureLoaded();
     const directory = normalizeDirectory(input.directory);
     const rootsOnly = input.roots !== false;
     const archived = input.archived === true;
     const limit = typeof input.limit === 'number' && input.limit > 0 ? input.limit : null;
+
+    await hydrateSessionsFromCodexList({ directory, archived, limit }).catch(() => {});
 
     let result = Array.from(sessions.values())
       .map((entry) => ({ ...entry.session }))
@@ -920,15 +1204,25 @@ export const createCodexBackendRuntime = (dependencies) => {
   };
 
   const getSession = async (input = {}) => {
-    const entry = await getEntry(input.sessionID);
+    let entry = await getEntry(input.sessionID);
+    if (!entry && typeof input.directory === 'string') {
+      await hydrateSessionsFromCodexList({ directory: normalizeDirectory(input.directory), archived: false }).catch(() => {});
+      entry = await getEntry(input.sessionID);
+    }
     return entry ? { ...entry.session } : null;
   };
 
   const getMessages = async (input = {}) => {
-    const entry = await getEntry(input.sessionID);
+    let entry = await getEntry(input.sessionID);
+    if (!entry && typeof input.directory === 'string') {
+      await hydrateSessionsFromCodexList({ directory: normalizeDirectory(input.directory), archived: false }).catch(() => {});
+      entry = await getEntry(input.sessionID);
+    }
     if (!entry) {
       return [];
     }
+    entry = await hydrateEntryMessagesFromCodexThread(entry);
+    entry = await ensureEntryRecordModelAttribution(entry);
 
     let records = entry.records.map((record) => cloneRecord(record));
     if (typeof input.before === 'string' && input.before.trim().length > 0) {
@@ -1128,6 +1422,31 @@ export const createCodexBackendRuntime = (dependencies) => {
     }
 
     const archivedAt = typeof input?.time?.archived === 'number' ? input.time.archived : null;
+    const shouldArchive = typeof archivedAt === 'number';
+    const requestedTitle = typeof input.title === 'string' ? input.title.trim() : null;
+
+    if (requestedTitle !== null && requestedTitle !== entry.session.title) {
+      try {
+        await appServer.setThreadName(input.sessionID, requestedTitle, {
+          directory: entry.session.directory,
+          threadId: entry.threadId,
+        });
+      } catch (error) {
+        console.warn(`[codex-backend] thread/name/set failed for ${input.sessionID}: ${error?.message || error}`);
+      }
+    }
+
+    if (shouldArchive) {
+      try {
+        await appServer.archiveThread(input.sessionID, {
+          directory: entry.session.directory,
+          threadId: entry.threadId,
+        });
+      } catch (error) {
+        console.warn(`[codex-backend] thread/archive failed for ${input.sessionID}: ${error?.message || error}`);
+      }
+    }
+
     const nextEntry = {
       ...entry,
       session: {
@@ -1154,7 +1473,15 @@ export const createCodexBackendRuntime = (dependencies) => {
       return false;
     }
 
-    // Shut down the app-server process if one exists
+    // Best-effort Codex lifecycle cleanup before local deletion
+    await appServer.archiveThread(sessionId, {
+      directory: entry.session.directory,
+      threadId: entry.threadId,
+    }).catch(() => {});
+    await appServer.unsubscribeThread(sessionId, {
+      directory: entry.session.directory,
+      threadId: entry.threadId,
+    }).catch(() => {});
     await appServer.shutdownSession(sessionId).catch(() => {});
 
     sessions.delete(sessionId);

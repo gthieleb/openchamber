@@ -360,7 +360,42 @@ export const registerOpenChamberRoutes = (app, dependencies) => {
     });
   };
 
-  const getBoundBackend = async (sessionId) => sessionBindingsRuntime.getEffectiveBinding(sessionId);
+  const repairNonOpenCodeBinding = async (binding, directory) => {
+    if (!binding || binding.backendId !== 'opencode') {
+      return binding;
+    }
+
+    for (const descriptor of backendRegistry.listBackends()) {
+      if (descriptor.id === 'opencode' || !backendRegistry.isBackendSelectable(descriptor.id)) {
+        continue;
+      }
+      const runtime = getBackendRuntime(descriptor.id);
+      if (!runtime?.getSession) {
+        continue;
+      }
+      const session = await runtime.getSession({
+        sessionID: binding.backendSessionId,
+        directory: directory || binding.directory,
+      }).catch(() => null);
+      if (!session) {
+        continue;
+      }
+      return await sessionBindingsRuntime.upsertBinding({
+        sessionId: binding.sessionId,
+        backendId: descriptor.id,
+        backendSessionId: typeof session.id === 'string' ? session.id : binding.backendSessionId,
+        directory: typeof session.directory === 'string'
+          ? session.directory
+          : (typeof session.cwd === 'string' ? session.cwd : binding.directory),
+      });
+    }
+
+    return binding;
+  };
+  const getBoundBackend = async (sessionId, req) => {
+    const binding = await sessionBindingsRuntime.getEffectiveBinding(sessionId);
+    return repairNonOpenCodeBinding(binding, req ? parseDirectory(req, binding?.directory) : binding?.directory);
+  };
   const getBackendRuntime = (backendId) => backendRegistry.getRuntime(backendId);
   const parsePositiveNumber = (value) => {
     if (typeof value === 'number' && Number.isFinite(value) && value > 0) {
@@ -448,7 +483,7 @@ export const registerOpenChamberRoutes = (app, dependencies) => {
   app.get('/api/openchamber/harness/control-surface', async (req, res) => {
     try {
       const sessionId = typeof req.query?.sessionId === 'string' ? req.query.sessionId.trim() : '';
-      const binding = sessionId ? await getBoundBackend(sessionId) : null;
+      const binding = sessionId ? await getBoundBackend(sessionId, req) : null;
       const backendId = binding?.backendId || await getRequestedBackendId(req);
 
       if (!backendRegistry.isBackendSelectable(backendId)) {
@@ -496,7 +531,19 @@ export const registerOpenChamberRoutes = (app, dependencies) => {
         }
         const backendSessions = await runtime.listSessions({ directory, limit, archived, roots });
         if (Array.isArray(backendSessions)) {
-          sessions.push(...backendSessions.map((session) => toHarnessSession(sessionBindingsRuntime.annotateSession({ ...session, backendId: descriptor.id }), descriptor.id)));
+          for (const session of backendSessions) {
+            if (session?.id) {
+              await sessionBindingsRuntime.upsertBinding({
+                sessionId: session.id,
+                backendId: descriptor.id,
+                backendSessionId: session.id,
+                directory: typeof session.directory === 'string'
+                  ? session.directory
+                  : (typeof session.cwd === 'string' ? session.cwd : null),
+              });
+            }
+            sessions.push(toHarnessSession({ ...session, backendId: descriptor.id }, descriptor.id));
+          }
         }
       }
 
@@ -512,7 +559,7 @@ export const registerOpenChamberRoutes = (app, dependencies) => {
   app.get('/api/openchamber/harness/session/:sessionId', async (req, res) => {
     try {
       const sessionId = typeof req.params?.sessionId === 'string' ? req.params.sessionId : '';
-      const binding = await getBoundBackend(sessionId);
+      const binding = await getBoundBackend(sessionId, req);
       if (!binding) {
         return res.status(404).json({ error: 'Session not found' });
       }
@@ -542,7 +589,7 @@ export const registerOpenChamberRoutes = (app, dependencies) => {
   app.get('/api/openchamber/harness/session/:sessionId/messages', async (req, res) => {
     try {
       const sessionId = typeof req.params?.sessionId === 'string' ? req.params.sessionId : '';
-      const binding = await getBoundBackend(sessionId);
+      const binding = await getBoundBackend(sessionId, req);
       if (!binding) {
         return res.status(404).json({ error: 'Session not found' });
       }
@@ -605,7 +652,7 @@ export const registerOpenChamberRoutes = (app, dependencies) => {
   app.post('/api/openchamber/harness/session/:sessionId/message', async (req, res) => {
     try {
       const sessionId = typeof req.params?.sessionId === 'string' ? req.params.sessionId : '';
-      const binding = await getBoundBackend(sessionId);
+      const binding = await getBoundBackend(sessionId, req);
       if (!binding) {
         return res.status(404).json({ error: 'Session not found' });
       }
@@ -640,7 +687,7 @@ export const registerOpenChamberRoutes = (app, dependencies) => {
   app.post('/api/openchamber/harness/session/:sessionId/prompt', async (req, res) => {
     try {
       const sessionId = typeof req.params?.sessionId === 'string' ? req.params.sessionId : '';
-      const binding = await getBoundBackend(sessionId);
+      const binding = await getBoundBackend(sessionId, req);
       if (!binding) {
         return res.status(404).json({ error: 'Session not found' });
       }
@@ -674,7 +721,7 @@ export const registerOpenChamberRoutes = (app, dependencies) => {
   app.post('/api/openchamber/harness/session/:sessionId/command', async (req, res) => {
     try {
       const sessionId = typeof req.params?.sessionId === 'string' ? req.params.sessionId : '';
-      const binding = await getBoundBackend(sessionId);
+      const binding = await getBoundBackend(sessionId, req);
       if (!binding) {
         return res.status(404).json({ error: 'Session not found' });
       }
@@ -709,7 +756,7 @@ export const registerOpenChamberRoutes = (app, dependencies) => {
   app.post('/api/openchamber/harness/session/:sessionId/abort', async (req, res) => {
     try {
       const sessionId = typeof req.params?.sessionId === 'string' ? req.params.sessionId : '';
-      const binding = await getBoundBackend(sessionId);
+      const binding = await getBoundBackend(sessionId, req);
       if (!binding) {
         return res.status(404).json({ error: 'Session not found' });
       }
@@ -737,7 +784,7 @@ export const registerOpenChamberRoutes = (app, dependencies) => {
   app.post('/api/openchamber/harness/session/:sessionId/revert', async (req, res) => {
     try {
       const sessionId = typeof req.params?.sessionId === 'string' ? req.params.sessionId : '';
-      const binding = await getBoundBackend(sessionId);
+      const binding = await getBoundBackend(sessionId, req);
       if (!binding) {
         return res.status(404).json({ error: 'Session not found' });
       }
@@ -776,7 +823,7 @@ export const registerOpenChamberRoutes = (app, dependencies) => {
   app.post('/api/openchamber/harness/session/:sessionId/unrevert', async (req, res) => {
     try {
       const sessionId = typeof req.params?.sessionId === 'string' ? req.params.sessionId : '';
-      const binding = await getBoundBackend(sessionId);
+      const binding = await getBoundBackend(sessionId, req);
       if (!binding) {
         return res.status(404).json({ error: 'Session not found' });
       }
@@ -804,7 +851,7 @@ export const registerOpenChamberRoutes = (app, dependencies) => {
   app.post('/api/openchamber/harness/session/:sessionId/update', async (req, res) => {
     try {
       const sessionId = typeof req.params?.sessionId === 'string' ? req.params.sessionId : '';
-      const binding = await getBoundBackend(sessionId);
+      const binding = await getBoundBackend(sessionId, req);
       if (!binding) {
         return res.status(404).json({ error: 'Session not found' });
       }
@@ -834,7 +881,7 @@ export const registerOpenChamberRoutes = (app, dependencies) => {
   app.delete('/api/openchamber/harness/session/:sessionId', async (req, res) => {
     try {
       const sessionId = typeof req.params?.sessionId === 'string' ? req.params.sessionId : '';
-      const binding = await getBoundBackend(sessionId);
+      const binding = await getBoundBackend(sessionId, req);
       if (!binding) {
         return res.status(404).json({ error: 'Session not found' });
       }
@@ -863,7 +910,7 @@ export const registerOpenChamberRoutes = (app, dependencies) => {
   app.post('/api/openchamber/harness/session/:sessionId/fork', async (req, res) => {
     try {
       const sessionId = typeof req.params?.sessionId === 'string' ? req.params.sessionId : '';
-      const binding = await getBoundBackend(sessionId);
+      const binding = await getBoundBackend(sessionId, req);
       if (!binding) {
         return res.status(404).json({ error: 'Session not found' });
       }
@@ -901,7 +948,7 @@ export const registerOpenChamberRoutes = (app, dependencies) => {
   app.post('/api/openchamber/harness/session/:sessionId/share', async (req, res) => {
     try {
       const sessionId = typeof req.params?.sessionId === 'string' ? req.params.sessionId : '';
-      const binding = await getBoundBackend(sessionId);
+      const binding = await getBoundBackend(sessionId, req);
       if (!binding) {
         return res.status(404).json({ error: 'Session not found' });
       }
@@ -930,7 +977,7 @@ export const registerOpenChamberRoutes = (app, dependencies) => {
   app.post('/api/openchamber/harness/session/:sessionId/unshare', async (req, res) => {
     try {
       const sessionId = typeof req.params?.sessionId === 'string' ? req.params.sessionId : '';
-      const binding = await getBoundBackend(sessionId);
+      const binding = await getBoundBackend(sessionId, req);
       if (!binding) {
         return res.status(404).json({ error: 'Session not found' });
       }
@@ -960,7 +1007,7 @@ export const registerOpenChamberRoutes = (app, dependencies) => {
     try {
       const sessionId = typeof req.params?.sessionId === 'string' ? req.params.sessionId : '';
       const requestId = typeof req.params?.requestId === 'string' ? req.params.requestId : '';
-      const binding = await getBoundBackend(sessionId);
+      const binding = await getBoundBackend(sessionId, req);
       if (!binding) {
         return res.status(404).json({ error: 'Session not found' });
       }
@@ -996,7 +1043,7 @@ export const registerOpenChamberRoutes = (app, dependencies) => {
     try {
       const sessionId = typeof req.params?.sessionId === 'string' ? req.params.sessionId : '';
       const requestId = typeof req.params?.requestId === 'string' ? req.params.requestId : '';
-      const binding = await getBoundBackend(sessionId);
+      const binding = await getBoundBackend(sessionId, req);
       if (!binding) {
         return res.status(404).json({ error: 'Session not found' });
       }

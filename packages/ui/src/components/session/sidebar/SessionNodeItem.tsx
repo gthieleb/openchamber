@@ -395,6 +395,8 @@ function SessionNodeItemComponent(props: Props): React.ReactNode {
   const backendBadgeId = (resolvedSession as Session & { backendId?: string | null }).backendId
     ?? sessionBackendSelection
     ?? null;
+  const normalizedBackendId = typeof backendBadgeId === 'string' ? backendBadgeId.trim().toLowerCase() : '';
+  const canShareSession = normalizedBackendId === '' || normalizedBackendId === 'opencode';
   const backendBadgeLabel = formatBackendLabel(backendBadgeId);
   const providerBadgeLabel = providerBadgeName
     ?? (providerBadgeId && providerBadgeId.trim().length > 0 ? providerBadgeId : null);
@@ -718,12 +720,12 @@ function SessionNodeItemComponent(props: Props): React.ReactNode {
         {isPinnedSession ? <RiUnpinLine className="mr-1 h-4 w-4" /> : <RiPushpinLine className="mr-1 h-4 w-4" />}
         {isPinnedSession ? t('sessions.sidebar.session.menu.unpin') : t('sessions.sidebar.session.menu.pin')}
       </DropdownMenuItem>
-      {!getCompatibleSessionShareUrl(resolvedSession) ? (
+      {canShareSession && !getCompatibleSessionShareUrl(resolvedSession) ? (
         <DropdownMenuItem onClick={() => handleShareSession(resolvedSession)} className="[&>svg]:mr-1">
           <RiShare2Line className="mr-1 h-4 w-4" />
           {t('sessions.sidebar.session.menu.share')}
         </DropdownMenuItem>
-      ) : (
+      ) : canShareSession ? (
         <>
           <DropdownMenuItem onClick={() => { const shareUrl = getCompatibleSessionShareUrl(resolvedSession); if (shareUrl) handleCopyShareUrl(shareUrl, session.id); }} className="[&>svg]:mr-1">
             {copiedSessionId === session.id
@@ -735,7 +737,7 @@ function SessionNodeItemComponent(props: Props): React.ReactNode {
             {t('sessions.sidebar.session.menu.unshare')}
           </DropdownMenuItem>
         </>
-      )}
+      ) : null}
       <DropdownMenuItem onClick={() => { void handleExportSession(); }} className="[&>svg]:mr-1">
         <RiDownloadLine className="mr-1 h-4 w-4" />
         {t('sessions.sidebar.session.menu.exportMarkdown')}

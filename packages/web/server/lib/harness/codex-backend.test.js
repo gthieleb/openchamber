@@ -2,12 +2,18 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const codexAppServerState = {
   listModels: vi.fn(),
+  listThreads: vi.fn(),
+  readThread: vi.fn(),
   getOrCreateProcess: vi.fn(),
   getThreadId: vi.fn(),
   startTurn: vi.fn(),
   abort: vi.fn(),
   shutdownSession: vi.fn(),
   rollbackTurns: vi.fn(),
+  archiveThread: vi.fn(),
+  unarchiveThread: vi.fn(),
+  unsubscribeThread: vi.fn(),
+  setThreadName: vi.fn(),
   shutdownAll: vi.fn(),
   hasPermissionRequest: vi.fn(),
   hasQuestionRequest: vi.fn(),
@@ -97,11 +103,17 @@ describe('Codex backend runtime baseline contract', () => {
       { id: 'gpt-5.5', label: 'GPT 5.5', isDefault: true },
     ]);
     codexAppServerState.getThreadId.mockReturnValue('codex-thread-1');
+    codexAppServerState.listThreads.mockResolvedValue([]);
+    codexAppServerState.readThread.mockResolvedValue(null);
     codexAppServerState.getOrCreateProcess.mockResolvedValue(undefined);
     codexAppServerState.startTurn.mockResolvedValue(undefined);
     codexAppServerState.abort.mockResolvedValue(undefined);
     codexAppServerState.shutdownSession.mockResolvedValue(undefined);
     codexAppServerState.rollbackTurns.mockResolvedValue(undefined);
+    codexAppServerState.archiveThread.mockResolvedValue(true);
+    codexAppServerState.unarchiveThread.mockResolvedValue(true);
+    codexAppServerState.unsubscribeThread.mockResolvedValue(true);
+    codexAppServerState.setThreadName.mockResolvedValue(true);
     codexAppServerState.hasPermissionRequest.mockReturnValue(false);
     codexAppServerState.hasQuestionRequest.mockReturnValue(false);
     codexAppServerState.listPendingPermissions.mockReturnValue([]);
@@ -277,6 +289,29 @@ describe('Codex backend runtime baseline contract', () => {
     await expect(runtime.getControlSurface()).rejects.toThrow('Codex model list is empty');
   });
 
+  it('hydrates listSessions from Codex thread/list for matching directory', async () => {
+    const { runtime } = createRuntime();
+    codexAppServerState.listThreads.mockResolvedValueOnce([
+      {
+        id: 'thread-external-1',
+        cwd: '/repo',
+        name: 'External Codex session',
+        preview: 'Preview text',
+        createdAt: 1,
+        updatedAt: 2,
+        status: { type: 'idle' },
+      },
+    ]);
+
+    const sessions = await runtime.listSessions({ directory: '/repo' });
+
+    expect(codexAppServerState.listThreads).toHaveBeenCalledWith({ cwd: '/repo', archived: false });
+    expect(sessions.some((session) => session.title === 'External Codex session')).toBe(true);
+    const hydrated = sessions.find((session) => session.title === 'External Codex session');
+    expect(hydrated?.backendId).toBe('codex');
+    expect(hydrated?.directory).toBe('/repo');
+  });
+
   it('persists user sends and emits OpenCode-compatible message/session/status events', async () => {
     const { runtime, events, memoryFs } = createRuntime();
     const session = await runtime.createSession({ directory: '/repo' });
@@ -373,5 +408,54 @@ describe('Codex backend runtime baseline contract', () => {
         properties: expect.objectContaining({ sessionID: session.id }),
       }),
     ]);
+  });
+
+  it('archives Codex thread via app-server before marking session archived', async () => {
+    const { runtime } = createRuntime();
+    const session = await runtime.createSession({ directory: '/repo' });
+
+    await runtime.updateSession({
+      sessionID: session.id,
+      time: { archived: 12345 },
+    });
+
+    expect(codexAppServerState.archiveThread).toHaveBeenCalledWith(session.id, {
+      directory: '/repo',
+      threadId: null,
+    });
+  });
+
+  it('renames Codex thread via app-server before updating local session title', async () => {
+    const { runtime } = createRuntime();
+    const session = await runtime.createSession({ directory: '/repo', title: 'Old title' });
+
+    await runtime.updateSession({
+      sessionID: session.id,
+      title: 'New title',
+    });
+
+    expect(codexAppServerState.setThreadName).toHaveBeenCalledWith(session.id, 'New title', {
+      directory: '/repo',
+      threadId: null,
+    });
+    const sessions = await runtime.listSessions({ directory: '/repo' });
+    expect(sessions.find((item) => item.id === session.id)?.title).toBe('New title');
+  });
+
+  it('archives and unsubscribes Codex thread before local delete', async () => {
+    const { runtime } = createRuntime();
+    const session = await runtime.createSession({ directory: '/repo' });
+
+    await expect(runtime.deleteSession({ sessionID: session.id })).resolves.toBe(true);
+
+    expect(codexAppServerState.archiveThread).toHaveBeenCalledWith(session.id, {
+      directory: '/repo',
+      threadId: null,
+    });
+    expect(codexAppServerState.unsubscribeThread).toHaveBeenCalledWith(session.id, {
+      directory: '/repo',
+      threadId: null,
+    });
+    expect(codexAppServerState.shutdownSession).toHaveBeenCalledWith(session.id);
   });
 });

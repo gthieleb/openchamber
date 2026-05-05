@@ -55,6 +55,7 @@ type OpenCodePartLike = Part & {
 
 export function fromOpenCodeSession(session: Session): HarnessSession {
   const source = session as Session & {
+    backendId?: string | null
     parentID?: string | null
     directory?: string | null
     cwd?: string | null
@@ -63,7 +64,9 @@ export function fromOpenCodeSession(session: Session): HarnessSession {
 
   return {
     id: session.id,
-    backendId: OPENCODE_BACKEND_ID,
+    backendId: typeof source.backendId === "string" && source.backendId.trim().length > 0
+      ? source.backendId
+      : OPENCODE_BACKEND_ID,
     title: typeof session.title === "string" ? session.title : "",
     directory: source.directory ?? source.cwd ?? null,
     parentId: source.parentID ?? null,

@@ -178,7 +178,7 @@ describe('Codex app-server adapter event mapping', () => {
     expect(events.at(-1).payload).toEqual(expect.objectContaining({
       type: 'session.updated',
       properties: expect.objectContaining({
-        info: expect.objectContaining({ id: 'session-1', title: 'Generated title' }),
+        info: expect.objectContaining({ id: 'session-1', backendId: 'codex', title: 'Generated title' }),
       }),
     }));
     expect(onThreadNameUpdated).toHaveBeenCalledWith('session-1', 'Generated title');

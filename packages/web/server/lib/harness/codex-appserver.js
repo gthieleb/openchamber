@@ -392,6 +392,94 @@ export function createCodexAppServerAdapter({ crypto, emitEvent, onTurnCompleted
     return models.map((option) => ({ ...option }));
   }
 
+  async function listThreads({ cwd, archived, limit } = {}) {
+    if (!codexPath) {
+      return [];
+    }
+
+    const rpc = createJsonRpcSubprocess({
+      command: codexPath,
+      args: ['app-server'],
+      requestTimeout: INIT_TIMEOUT_MS,
+      onRequest: (id, method) => {
+        rpc.sendResponse(id, null, { code: -32601, message: `Method not found: ${method}` });
+      },
+      onNotification: () => {},
+      onError: (err) => {
+        const msg = err?.message || '';
+        if (msg.includes('state db missing rollout path')
+          || msg.includes('state db record_discrepancy')) {
+          return;
+        }
+        console.warn(`[codex-appserver:thread-list] ${msg}`);
+      },
+    });
+
+    try {
+      await rpc.sendRequest('initialize', {
+        clientInfo: CLIENT_INFO,
+        capabilities: CAPABILITIES,
+      }, { timeout: INIT_TIMEOUT_MS });
+      rpc.sendNotification('initialized');
+
+      const params = {};
+      if (typeof cwd === 'string' && cwd.trim().length > 0) {
+        params.cwd = [cwd.trim()];
+      }
+      if (typeof archived === 'boolean') {
+        params.archived = archived;
+      }
+      if (typeof limit === 'number' && limit > 0) {
+        params.limit = limit;
+      }
+
+      const payload = await rpc.sendRequest('thread/list', params, { timeout: 15_000 });
+      return Array.isArray(payload?.data) ? payload.data : [];
+    } finally {
+      rpc.kill();
+    }
+  }
+
+  async function readThread({ threadId, includeTurns = true } = {}) {
+    if (!codexPath || typeof threadId !== 'string' || threadId.trim().length === 0) {
+      return null;
+    }
+
+    const rpc = createJsonRpcSubprocess({
+      command: codexPath,
+      args: ['app-server'],
+      requestTimeout: INIT_TIMEOUT_MS,
+      onRequest: (id, method) => {
+        rpc.sendResponse(id, null, { code: -32601, message: `Method not found: ${method}` });
+      },
+      onNotification: () => {},
+      onError: (err) => {
+        const msg = err?.message || '';
+        if (msg.includes('state db missing rollout path')
+          || msg.includes('state db record_discrepancy')) {
+          return;
+        }
+        console.warn(`[codex-appserver:thread-read] ${msg}`);
+      },
+    });
+
+    try {
+      await rpc.sendRequest('initialize', {
+        clientInfo: CLIENT_INFO,
+        capabilities: CAPABILITIES,
+      }, { timeout: INIT_TIMEOUT_MS });
+      rpc.sendNotification('initialized');
+
+      const payload = await rpc.sendRequest('thread/read', {
+        threadId: threadId.trim(),
+        includeTurns: Boolean(includeTurns),
+      }, { timeout: 15_000 });
+      return payload?.thread && typeof payload.thread === 'object' ? payload.thread : null;
+    } finally {
+      rpc.kill();
+    }
+  }
+
   /**
    * Start or resume a thread on the process.
    */
@@ -683,6 +771,37 @@ export function createCodexAppServerAdapter({ crypto, emitEvent, onTurnCompleted
         });
         break;
 
+      case 'codex/event/reasoning_content_delta': {
+        const legacyItemId = params?.msg?.item_id || params?.msg?.itemId || params?.itemId;
+        if (typeof legacyItemId !== 'string' || legacyItemId.length === 0) {
+          console.warn(`[codex-appserver:${proc.sessionId}] skipping legacy reasoning delta without itemId`);
+          break;
+        }
+        handleContentDelta(proc, 'item/reasoning/summaryTextDelta', {
+          ...(params?.msg || {}),
+          delta: params?.msg?.delta,
+          textDelta: params?.msg?.delta,
+          itemId: legacyItemId,
+        });
+        break;
+      }
+
+      case 'codex/event/agent_reasoning': {
+        const legacyItemId = params?.id || params?.itemId || params?.msg?.item_id || params?.msg?.itemId;
+        if ((typeof params?.msg?.text !== 'string' || params.msg.text.length === 0)
+          || typeof legacyItemId !== 'string'
+          || legacyItemId.length === 0) {
+          console.warn(`[codex-appserver:${proc.sessionId}] skipping legacy agent reasoning event without text/itemId`);
+          break;
+        }
+        handleContentDelta(proc, 'item/reasoning/textDelta', {
+          delta: params.msg.text,
+          textDelta: params.msg.text,
+          itemId: legacyItemId,
+        });
+        break;
+      }
+
       case 'item/requestApproval/decision':
       case 'item/tool/requestUserInput/answered':
         // Acknowledgement notifications — no action needed
@@ -936,6 +1055,7 @@ export function createCodexAppServerAdapter({ crypto, emitEvent, onTurnCompleted
       properties: {
         info: {
           id: proc.sessionId,
+          backendId: 'codex',
           title,
           directory: proc.directory,
         },
@@ -1366,6 +1486,93 @@ export function createCodexAppServerAdapter({ crypto, emitEvent, onTurnCompleted
     },
 
     /**
+     * Archive a Codex thread for a session.
+     */
+    async archiveThread(sessionId, options = {}) {
+      let proc = pool.get(sessionId);
+      if ((!proc || !proc.threadId) && options.directory) {
+        proc = await this.getOrCreateProcess(sessionId, options.directory, {
+          ...(options.threadId ? { threadId: options.threadId } : {}),
+          ...(options.model ? { model: options.model } : {}),
+          ...(options.approvalPolicy ? { approvalPolicy: options.approvalPolicy } : {}),
+          ...(options.sandbox ? { sandbox: options.sandbox } : {}),
+        });
+      }
+      if (!proc || !proc.threadId) {
+        return false;
+      }
+      await proc.rpc.sendRequest('thread/archive', { threadId: proc.threadId }, { timeout: 15_000 });
+      return true;
+    },
+
+    /**
+     * Unarchive a Codex thread for a session.
+     */
+    async unarchiveThread(sessionId, options = {}) {
+      let proc = pool.get(sessionId);
+      if ((!proc || !proc.threadId) && options.directory) {
+        proc = await this.getOrCreateProcess(sessionId, options.directory, {
+          ...(options.threadId ? { threadId: options.threadId } : {}),
+          ...(options.model ? { model: options.model } : {}),
+          ...(options.approvalPolicy ? { approvalPolicy: options.approvalPolicy } : {}),
+          ...(options.sandbox ? { sandbox: options.sandbox } : {}),
+        });
+      }
+      if (!proc || !proc.threadId) {
+        return false;
+      }
+      await proc.rpc.sendRequest('thread/unarchive', { threadId: proc.threadId }, { timeout: 15_000 });
+      return true;
+    },
+
+    /**
+     * Unsubscribe from a Codex thread for a session.
+     */
+    async unsubscribeThread(sessionId, options = {}) {
+      let proc = pool.get(sessionId);
+      if ((!proc || !proc.threadId) && options.directory) {
+        proc = await this.getOrCreateProcess(sessionId, options.directory, {
+          ...(options.threadId ? { threadId: options.threadId } : {}),
+          ...(options.model ? { model: options.model } : {}),
+          ...(options.approvalPolicy ? { approvalPolicy: options.approvalPolicy } : {}),
+          ...(options.sandbox ? { sandbox: options.sandbox } : {}),
+        });
+      }
+      if (!proc || !proc.threadId) {
+        return false;
+      }
+      await proc.rpc.sendRequest('thread/unsubscribe', { threadId: proc.threadId }, { timeout: 15_000 });
+      return true;
+    },
+
+    /**
+     * Set Codex thread name for a session.
+     */
+    async setThreadName(sessionId, name, options = {}) {
+      if (typeof name !== 'string') {
+        return false;
+      }
+      const threadName = name.trim();
+      let proc = pool.get(sessionId);
+      if ((!proc || !proc.threadId) && options.directory) {
+        proc = await this.getOrCreateProcess(sessionId, options.directory, {
+          ...(options.threadId ? { threadId: options.threadId } : {}),
+          ...(options.model ? { model: options.model } : {}),
+          ...(options.approvalPolicy ? { approvalPolicy: options.approvalPolicy } : {}),
+          ...(options.sandbox ? { sandbox: options.sandbox } : {}),
+        });
+      }
+      if (!proc || !proc.threadId) {
+        return false;
+      }
+      await proc.rpc.sendRequest('thread/name/set', {
+        threadId: proc.threadId,
+        name: threadName.length > 0 ? threadName : null,
+      }, { timeout: 15_000 });
+      return true;
+    },
+
+    /**
      * Reply to a permission request.
      */
     replyToPermission(requestId, reply) {
@@ -1549,6 +1756,16 @@ export function createCodexAppServerAdapter({ crypto, emitEvent, onTurnCompleted
      */
     async listModels() {
       return listModels();
+    },
+
+    /**
+     * List threads directly from Codex app-server.
+     */
+    async listThreads(options = {}) {
+      return listThreads(options);
+    },
+    async readThread(options = {}) {
+      return readThread(options);
     },
 
     /**

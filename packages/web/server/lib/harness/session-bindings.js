@@ -179,6 +179,15 @@ export const createSessionBindingsRuntime = ({
     if (!sessionId) {
       return session;
     }
+    const explicitBackendId = typeof session.backendId === 'string' && session.backendId.trim().length > 0
+      ? session.backendId.trim()
+      : '';
+    if (explicitBackendId) {
+      return {
+        ...session,
+        backendId: explicitBackendId,
+      };
+    }
     const binding = getEffectiveBindingSync(sessionId);
     if (!binding) {
       return session;
