@@ -3,6 +3,7 @@ import { cn } from '@/lib/utils';
 import { useUIStore } from '@/stores/useUIStore';
 import { useI18n } from '@/lib/i18n';
 import { isDesktopShell, isVSCodeRuntime, startDesktopWindowDrag } from '@/lib/desktop';
+import { useTabletStandalonePwaRuntime } from '@/lib/device';
 
 export const RIGHT_SIDEBAR_CONTENT_WIDTH = 420;
 const RIGHT_SIDEBAR_MIN_WIDTH = 400;
@@ -27,6 +28,7 @@ export const RightSidebar: React.FC<RightSidebarProps> = ({ isOpen, children, cl
     }
     return Boolean(window.__OPENCHAMBER_ELECTRON__) && window.__OPENCHAMBER_PLATFORM__ === 'win32';
   }, []);
+  const isTabletStandalonePwa = useTabletStandalonePwaRuntime();
   const [isResizing, setIsResizing] = React.useState(false);
   const startXRef = React.useRef(0);
   const startWidthRef = React.useRef(rightSidebarWidth || 420);
@@ -143,8 +145,9 @@ export const RightSidebar: React.FC<RightSidebarProps> = ({ isOpen, children, cl
     return {
       paddingLeft: 'calc(0.75rem + var(--oc-wco-left-inset, 0px))',
       paddingRight: 'calc(0.75rem + var(--oc-wco-right-inset, 0px))',
+      ...(isTabletStandalonePwa ? { paddingTop: 'var(--oc-safe-area-top, 0px)' } : null),
     };
-  }, [isDesktopApp, isVSCode, isWindowsElectronDesktop]);
+  }, [isDesktopApp, isTabletStandalonePwa, isVSCode, isWindowsElectronDesktop]);
 
   return (
     <aside
@@ -168,7 +171,10 @@ export const RightSidebar: React.FC<RightSidebarProps> = ({ isOpen, children, cl
       {isOpen ? (
         <div
           onMouseDown={handleDragStart}
-          className="app-region-drag absolute inset-x-0 top-0 z-20 flex h-[var(--oc-header-height,56px)] items-center justify-end px-3"
+          className={cn(
+            'app-region-drag absolute inset-x-0 top-0 z-20 flex items-center justify-end px-3',
+            'h-[var(--oc-header-height,56px)]',
+          )}
           style={webWindowControlsOverlayStyle}
           aria-hidden
         >
