@@ -40,7 +40,7 @@ function partUpdatedEvent(): Event {
 }
 
 describe("applyDirectoryEvent", () => {
-  test("returns typed recovery when delta arrives before parts", () => {
+  test("returns typed materialization when delta arrives before parts", () => {
     const result = applyDirectoryEvent(state(), deltaEvent())
 
     expect(result).toEqual({
@@ -49,7 +49,7 @@ describe("applyDirectoryEvent", () => {
     })
   })
 
-  test("returns typed recovery when delta part is missing", () => {
+  test("returns typed materialization when delta part is missing", () => {
     const result = applyDirectoryEvent(
       state({ part: { msg_1: [{ id: "prt_2", messageID: "msg_1", type: "text", text: "" } as Part] } }),
       deltaEvent(),

@@ -2,24 +2,24 @@ import type { SessionStatus, Message, Part } from "@opencode-ai/sdk/v2/client"
 import type { Session } from "@opencode-ai/sdk/v2"
 import { getSessionMaterializationStatus } from "./materialization"
 
-type ReconnectRecoveryState = {
+type ReconnectMaterializationState = {
   session: Session[]
   session_status?: Record<string, SessionStatus>
   message?: Record<string, Message[]>
   part?: Record<string, Part[]>
 }
 
-export type ViewedSessionRecoveryTarget = {
+export type ViewedSessionMaterializationTarget = {
   directory: string
   sessionId: string
 }
 
 type ReconnectCandidateOptions = {
   directory?: string
-  viewedSession?: ViewedSessionRecoveryTarget | null
+  viewedSession?: ViewedSessionMaterializationTarget | null
 }
 
-export function getReconnectCandidateSessionIds(state: ReconnectRecoveryState, options?: ReconnectCandidateOptions) {
+export function getReconnectCandidateSessionIds(state: ReconnectMaterializationState, options?: ReconnectCandidateOptions) {
   const ids = new Set<string>()
 
   for (const [sessionId, status] of Object.entries(state.session_status ?? {})) {

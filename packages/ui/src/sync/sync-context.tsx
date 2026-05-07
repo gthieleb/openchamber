@@ -694,12 +694,11 @@ const updateRoutingIndexFromEvent = (
 /**
  * Re-fetch pending questions and permissions for a directory and merge them
  * into the directory's child store, preserving any in-flight SSE updates that
- * arrived while the request was pending. Shared between reconnect resync and
- * session-switch resync (the latter is a belt-and-suspenders backstop for any
- * code path that drops a `question.asked` / `permission.requested` event —
- * directory-eviction rehydration, cross-directory session switches, transport
- * fallback gaps, etc.). When `candidateSessionIds` is omitted, every session
- * known to the directory store is treated as a candidate.
+ * arrived while the request was pending. Used by reconnect/materialization
+ * recovery paths only; normal session switches rely on primary SSE reducer
+ * state for `question.asked` / `permission.asked` events. When
+ * `candidateSessionIds` is omitted, every session known to the directory store
+ * is treated as a candidate.
  */
 export async function resyncBlockingRequestsForDirectory(
   directory: string,
@@ -717,8 +716,8 @@ export async function resyncBlockingRequestsForDirectory(
   const candidates = candidateSessionIds ?? Array.from(knownSessionIds)
   if (candidates.length === 0) return
 
-  // Re-fetch pending questions — they may have been asked during an SSE gap,
-  // a directory-eviction window, or a session-switch that bypassed bootstrap.
+  // Re-fetch pending questions that may have been asked during an SSE gap,
+  // reconnect window, or directory materialization gap.
   try {
     const beforeSignatures = new Map(
       candidates.map((sessionId) => [sessionId, requestSignature(before.question[sessionId])]),
