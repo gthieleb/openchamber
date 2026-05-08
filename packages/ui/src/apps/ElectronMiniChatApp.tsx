@@ -17,6 +17,7 @@ import { useSessionUIStore } from '@/sync/session-ui-store';
 import { SyncProvider, useSessions } from '@/sync/sync-context';
 import { SyncRuntimeEffects } from './AppEffects';
 import { useAppFontEffects } from './useAppFontEffects';
+import { useMiniChatKeyboardShortcuts } from '@/hooks/useMiniChatKeyboardShortcuts';
 import { listProjectWorktrees } from '@/lib/worktrees/worktreeManager';
 import type { WorktreeMetadata } from '@/types/worktree';
 
@@ -235,6 +236,7 @@ export function ElectronMiniChatApp({ apis }: ElectronMiniChatAppProps) {
   }, [apis]);
 
   useAppFontEffects();
+  useMiniChatKeyboardShortcuts();
   usePushVisibilityBeacon({ enabled: true });
   useWindowTitle();
 
