@@ -43,6 +43,7 @@ import { useChatSurfaceMode } from './useChatSurfaceMode';
 import { MobileAgentButton } from './MobileAgentButton';
 import { MobileModelButton } from './MobileModelButton';
 import { MobileSessionStatusBar } from './MobileSessionStatusBar';
+import { useIsDedicatedMobileApp } from '@/apps/mobileAppContext';
 import { useCurrentSessionActivity } from '@/hooks/useSessionActivity';
 import { toast } from '@/components/ui';
 // useMessageStore removed — messages now come from sync system
@@ -799,6 +800,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({ onOpenSettings, scrollTo
     const getVisibleAgents = useConfigStore((state) => state.getVisibleAgents);
     const agents = getVisibleAgents();
     const isMobile = useUIStore((state) => state.isMobile);
+    const isDedicatedMobileApp = useIsDedicatedMobileApp();
     const inputBarOffset = useUIStore((state) => state.inputBarOffset);
     const persistChatDraft = useUIStore((state) => state.persistChatDraft);
     const inputSpellcheckEnabled = useUIStore((state) => state.inputSpellcheckEnabled);
@@ -3917,8 +3919,9 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({ onOpenSettings, scrollTo
                         )}
                     </div>
 
-                    {/* Mobile Session Status Bar - above input */}
-                    {isMobile && <MobileSessionStatusBar />}
+                    {/* Mobile Session Status Bar — desktop responsive mobile only;
+                        the dedicated MobileApp root has its own header and no sidebars to bridge into. */}
+                    {isMobile && !isDedicatedMobileApp && <MobileSessionStatusBar />}
                 </div>
             </div>
         </form>

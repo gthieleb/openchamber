@@ -1,5 +1,5 @@
 import React from 'react';
-import { RiArrowLeftLine, RiGitBranchLine, RiLoader4Line } from '@remixicon/react';
+import { RiArrowLeftLine, RiCloseLine, RiGitBranchLine, RiLoader4Line } from '@remixicon/react';
 
 import { toast } from '@/components/ui';
 import { Button } from '@/components/ui/button';
@@ -26,7 +26,12 @@ type CommitAction = 'commit' | 'commitAndPush' | null;
 
 const normalizePath = (value?: string | null): string => (value || '').replace(/\\/g, '/').replace(/\/+$/g, '');
 
-export const MobileChangesSurface: React.FC = () => {
+type MobileChangesSurfaceProps = {
+  /** When provided, the list header gets a close X that calls this; used when the surface is hosted in MobileSurfaceShell. */
+  onClose?: () => void;
+};
+
+export const MobileChangesSurface: React.FC<MobileChangesSurfaceProps> = ({ onClose }) => {
   const { t } = useI18n();
   const { git } = useRuntimeAPIs();
   const currentDirectory = normalizePath(useEffectiveDirectory() ?? null);
@@ -381,8 +386,19 @@ export const MobileChangesSurface: React.FC = () => {
 
   return (
     <div className="flex h-full flex-col overflow-hidden bg-background text-foreground">
-      <header className="flex h-[var(--oc-header-height,56px)] shrink-0 items-center justify-between gap-3 border-b border-border/50 px-3 text-foreground">
-        <div className="min-w-0 flex-1 px-2">
+      <header className="flex h-[var(--oc-header-height,56px)] shrink-0 items-center gap-2 px-3 text-foreground">
+        {onClose ? (
+          <button
+            type="button"
+            className="-ml-1 flex size-10 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-interactive-hover hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+            aria-label={t('mobile.surface.closeAria')}
+            onClick={onClose}
+            style={{ touchAction: 'manipulation' }}
+          >
+            <RiCloseLine className="size-5" />
+          </button>
+        ) : null}
+        <div className="min-w-0 flex-1 px-1">
           <h2 className="typography-ui-label text-foreground">{t('mobile.nav.changes')}</h2>
           <p className="truncate typography-micro text-muted-foreground">
             {status?.current ? t('mobile.changes.branchLabel', { branch: status.current }) : currentDirectory}
@@ -416,6 +432,7 @@ export const MobileChangesSurface: React.FC = () => {
               onRevertFile={handleRevertFile}
               isRevertingAll={isRevertingAll}
               onVisiblePathsChange={setVisibleChangePaths}
+              maxListHeightClassName="max-h-[48vh]"
             />
             <CommitSection
               selectedCount={selectedPaths.size}
