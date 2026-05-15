@@ -45,6 +45,7 @@ import { useEffectiveDirectory } from '@/hooks/useEffectiveDirectory';
 import { useSessions } from '@/sync/sync-context';
 import { useI18n } from '@/lib/i18n';
 import { extractLoopbackUrls } from '@/lib/url';
+import { getReasoningTracePresentation } from './reasoningPresentation';
 
 const CONTAIN_LAYOUT_STYLE = { contain: 'layout' as const, transform: 'translateZ(0)' };
 const MESSAGE_FOOTER_CONTAINER_STYLE = { containerType: 'inline-size' as const, containerName: 'message-footer' };
@@ -1546,7 +1547,7 @@ const AssistantMessageBody = React.memo(({
                     continue;
                 }
                 if (showReasoningTraces) {
-                    if (isSortedRenderMode) {
+                    if (getReasoningTracePresentation(chatRenderMode) === 'timeline') {
                         rendered.push(
                             <ReasoningPart
                                 key={`reasoning-${messageId}-${i}`}

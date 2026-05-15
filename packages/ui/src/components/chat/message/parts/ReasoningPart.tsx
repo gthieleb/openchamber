@@ -5,10 +5,13 @@ import type { ContentChangeReason } from '@/hooks/useChatAutoFollow';
 import { ScrollableOverlay } from '@/components/ui/ScrollableOverlay';
 import { Icon } from "@/components/icon/Icon";
 import type { IconName } from "@/components/icon/icons";
+import { Button } from '@/components/ui/button';
+import { useI18n } from '@/lib/i18n';
 import { useUIStore } from '@/stores/useUIStore';
 import { useDurationTickerNow } from './useDurationTicker';
 import { MarkdownRenderer } from '../../MarkdownRenderer';
 import { useStreamingTextThrottle } from '../../hooks/useStreamingTextThrottle';
+import { getRandomWorkingPhrase } from '@/hooks/useAssistantStatus';
 
 type PartWithText = Part & { text?: string; content?: string; time?: { start?: number; end?: number } };
 
@@ -16,10 +19,10 @@ export type ReasoningVariant = 'thinking' | 'justification';
 
 const variantConfig: Record<
     ReasoningVariant,
-    { label: string; Icon: IconName }
+    { labelKey: 'chat.reasoningTrace.thinking' | 'chat.reasoningTrace.justification'; Icon: IconName }
 > = {
-    thinking: { label: 'Thinking', Icon: 'brain-ai-3' },
-    justification: { label: 'Justification', Icon: 'chat-ai-3' },
+    thinking: { labelKey: 'chat.reasoningTrace.thinking', Icon: 'brain-ai-3' },
+    justification: { labelKey: 'chat.reasoningTrace.justification', Icon: 'chat-ai-3' },
 };
 
 const cleanReasoningText = (text: string): string => {
@@ -93,12 +96,24 @@ export const ReasoningTimelineBlock: React.FC<ReasoningTimelineBlockProps> = ({
     actions,
     alwaysShowActions = false,
 }) => {
+    const { t } = useI18n();
     const [isExpanded, setIsExpanded] = React.useState(false);
+    const contentId = React.useId();
 
     const summary = React.useMemo(() => getReasoningSummary(text), [text]);
-    const { label, Icon: iconName } = variantConfig[variant];
+    const { labelKey, Icon: iconName } = variantConfig[variant];
+    const randomPhrase = React.useMemo(() => getRandomWorkingPhrase(), []);
+    const label = variant === 'thinking' ? randomPhrase : t(labelKey);
     const timeStart = typeof time?.start === 'number' && Number.isFinite(time.start) ? time.start : undefined;
     const timeEnd = typeof time?.end === 'number' && Number.isFinite(time.end) ? time.end : undefined;
+    const toggleAriaLabel = isExpanded
+        ? t('chat.reasoningTrace.collapseAria')
+        : t('chat.reasoningTrace.expandAria');
+
+    const handleToggle = React.useCallback(() => {
+        setIsExpanded((prev) => !prev);
+        onContentChange?.('structural');
+    }, [onContentChange]);
 
     React.useEffect(() => {
         if (text.trim().length === 0) {
@@ -113,11 +128,16 @@ export const ReasoningTimelineBlock: React.FC<ReasoningTimelineBlockProps> = ({
 
     return (
         <div className="my-1" data-reasoning-block-id={blockId} data-message-text-export-root="true">
-            <div
+            <Button
+                type="button"
+                variant="ghost"
+                aria-expanded={isExpanded}
+                aria-controls={contentId}
+                aria-label={toggleAriaLabel}
                 className={cn(
-                    'group/tool flex items-center gap-2 pr-2 pl-px py-1.5 rounded-xl cursor-pointer'
+                    'group/tool h-auto w-full justify-start gap-2 rounded-xl bg-transparent pr-2 pl-px py-1.5 text-left normal-case tracking-normal hover:bg-[var(--interactive-hover)] hover:text-[var(--surface-foreground)]'
                 )}
-                onClick={() => setIsExpanded((prev) => !prev)}
+                onClick={handleToggle}
             >
                 <div className="flex items-center gap-2 flex-shrink-0">
                     <div className="relative h-3.5 w-3.5 flex-shrink-0">
@@ -140,7 +160,16 @@ export const ReasoningTimelineBlock: React.FC<ReasoningTimelineBlockProps> = ({
                             {isExpanded ? <Icon name="arrow-down-s" className="h-3.5 w-3.5" /> : <Icon name="arrow-right-s" className="h-3.5 w-3.5" />}
                         </div>
                     </div>
-                    <span className="typography-meta font-medium">{label}</span>
+                    <span className="typography-meta font-medium inline-flex items-center">
+                        {label}
+                        {isStreaming && variant === 'thinking' ? (
+                            <span className="inline-flex ml-px" aria-hidden="true">
+                                <span className="thinking-dot" style={{ animationDelay: '0ms' }}>.</span>
+                                <span className="thinking-dot" style={{ animationDelay: '200ms' }}>.</span>
+                                <span className="thinking-dot" style={{ animationDelay: '400ms' }}>.</span>
+                            </span>
+                        ) : null}
+                    </span>
                 </div>
 
                 {(summary || (showDuration && typeof timeStart === 'number')) ? (
@@ -159,10 +188,11 @@ export const ReasoningTimelineBlock: React.FC<ReasoningTimelineBlockProps> = ({
                         ) : null}
                     </div>
                 ) : null}
-            </div>
+            </Button>
 
             {isExpanded && (
                 <div
+                    id={contentId}
                     className={cn(
                         'relative pr-2 pb-2 pt-2 pl-4'
                     )}
