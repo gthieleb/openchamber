@@ -447,20 +447,6 @@ svg.animate-spin {
   }
 }
 
-@keyframes thinking-dot-blink {
-  0%,
-  100% {
-    opacity: 0.2;
-  }
-  50% {
-    opacity: 1;
-  }
-}
-
-.thinking-dot {
-  animation: thinking-dot-blink 1.2s ease-in-out infinite;
-}
-
 .app-region-drag {
   -webkit-app-region: drag;
 }
@@ -870,7 +856,7 @@ html:not(.dark) .chat-scroll {
 
 /* Reasoning markdown renders at meta size, dimmed. */
 .markdown-content.markdown-reasoning {
-  font-size: var(--text-meta);
+  font-size: var(--text-markdown);
   color: var(--surface-muted-foreground);
   --markdown-heading1: inherit;
   --markdown-heading2: inherit;
