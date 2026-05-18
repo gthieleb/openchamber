@@ -35,10 +35,10 @@ export async function handleStandardGitBridgeMessage(message: BridgeMessageInput
     }
 
     case 'api:git/status': {
-      const { directory } = (payload || {}) as { directory?: string };
+      const { directory, mode } = (payload || {}) as { directory?: string; mode?: 'light' };
       const dirError = requireDirectory(id, type, directory);
       if (dirError) return dirError;
-      const status = await gitService.getGitStatus(directory!);
+      const status = await gitService.getGitStatus(directory!, mode === 'light' ? { mode } : undefined);
       return { id, type, success: true, data: status };
     }
 
@@ -413,6 +413,23 @@ export async function handleStandardGitBridgeMessage(message: BridgeMessageInput
         return { id, type, success: false, error: 'Directory and hash are required' };
       }
       const result = await gitService.getCommitFiles(directory, hash);
+      return { id, type, success: true, data: result };
+    }
+
+    case 'api:git/commit-file-diff': {
+      const { directory, hash, path: filePath, binary } = (payload || {}) as {
+        directory?: string;
+        hash?: string;
+        path?: string;
+        binary?: boolean;
+      };
+      if (!directory || !hash || !filePath) {
+        return { id, type, success: false, error: 'Directory, hash, and path are required' };
+      }
+      if (!/^[0-9a-fA-F]{7,40}$/.test(hash)) {
+        return { id, type, success: false, error: 'hash must be a valid commit SHA' };
+      }
+      const result = await gitService.getCommitFileDiff(directory, hash, filePath, Boolean(binary));
       return { id, type, success: true, data: result };
     }
 

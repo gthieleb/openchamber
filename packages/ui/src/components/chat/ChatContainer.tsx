@@ -1,5 +1,4 @@
 import React from 'react';
-import { RiArrowLeftLine } from '@remixicon/react';
 import type { Message, Part, Session } from '@opencode-ai/sdk/v2';
 
 import { ChatInput } from './ChatInput';
@@ -12,13 +11,14 @@ import { QuestionCard } from './QuestionCard';
 import { StatusRowContainer } from './StatusRowContainer';
 import ScrollToBottomButton from './components/ScrollToBottomButton';
 import { ScrollShadow } from '@/components/ui/ScrollShadow';
-import { useChatScrollManager, type AnimationHandlers, type ContentChangeReason } from '@/hooks/useChatScrollManager';
+import { useChatAutoFollow, type AnimationHandlers, type ContentChangeReason } from '@/hooks/useChatAutoFollow';
 import { useChatTimelineController } from './hooks/useChatTimelineController';
 import { TimelineDialog } from './TimelineDialog';
 import { useChatTurnNavigation } from './hooks/useChatTurnNavigation';
 import { useDeviceInfo } from '@/lib/device';
 import { Button } from '@/components/ui/button';
 import { OverlayScrollbar } from '@/components/ui/OverlayScrollbar';
+import { Icon } from "@/components/icon/Icon";
 import type { PermissionRequest } from '@/types/permission';
 import type { QuestionRequest } from '@/types/question';
 import { cn } from '@/lib/utils';
@@ -29,7 +29,6 @@ import {
 
 // New sync system imports
 import { useSessionUIStore } from '@/sync/session-ui-store';
-import { useViewportStore } from '@/sync/viewport-store';
 import { useStreamingStore } from '@/sync/streaming';
 import {
     useSessionMessageCount,
@@ -39,6 +38,7 @@ import {
     useSessionStatus,
 } from '@/sync/sync-context';
 import { useSync } from '@/sync/use-sync';
+import { getSessionMaterializationStatus } from '@/sync/materialization';
 import { usePlanDetection } from '@/hooks/usePlanDetection';
 import { getAllSyncSessions } from '@/sync/sync-refs';
 import { useI18n } from '@/lib/i18n';
@@ -47,7 +47,6 @@ const EMPTY_MESSAGES: Array<{ info: Message; parts: Part[] }> = [];
 const EMPTY_PERMISSIONS: PermissionRequest[] = [];
 const EMPTY_QUESTIONS: QuestionRequest[] = [];
 const IDLE_SESSION_STATUS = { type: 'idle' as const };
-const SESSION_RESELECTED_EVENT = 'openchamber:session-reselected';
 const CHAT_FORCE_SCROLL_BOTTOM_EVENT = 'openchamber:chat-force-scroll-bottom';
 const DEFAULT_RETRY_MESSAGE = 'Quota limit reached. Retrying automatically.';
 const CHAT_SCROLL_STYLE = {
@@ -152,7 +151,7 @@ type ChatViewportProps = {
     handleMessageContentChange: (reason?: ContentChangeReason) => void;
     getAnimationHandlers: (messageId: string) => AnimationHandlers;
     handleLoadOlder: () => void;
-    scrollToBottom: (options?: { instant?: boolean; force?: boolean }) => void;
+    scrollToBottom: () => void;
     sessionQuestions: QuestionRequest[];
     sessionPermissions: PermissionRequest[];
     isProgrammaticFollowActive: boolean;
@@ -316,21 +315,35 @@ const HYDRATING_SKELETON_ITEMS: Array<{
     },
 ];
 
-export const ChatContainer: React.FC = () => {
+const ReadOnlyPromptBanner: React.FC = () => {
+    const { t } = useI18n();
+
+    return (
+        <div className="p-3">
+            <div className="rounded-2xl border border-border/70 bg-[var(--surface-background)] px-4 py-3 typography-ui-label text-muted-foreground">
+                {t('chat.container.readOnlySubagentPromptBanner')}
+            </div>
+        </div>
+    );
+};
+
+type ChatContainerProps = {
+    autoOpenDraft?: boolean;
+    readOnly?: boolean;
+};
+
+export const ChatContainer: React.FC<ChatContainerProps> = ({ autoOpenDraft = true, readOnly = false }) => {
     const { t } = useI18n();
     // Session UI state
     const currentSessionId = useSessionUIStore((s) => s.currentSessionId);
     const openNewSessionDraft = useSessionUIStore((s) => s.openNewSessionDraft);
     const setCurrentSession = useSessionUIStore((s) => s.setCurrentSession);
     const newSessionDraft = useSessionUIStore((s) => s.newSessionDraft);
-    const updateViewportAnchor = useViewportStore((s) => s.updateViewportAnchor);
-    const isSyncing = useViewportStore((s) => s.isSyncing);
-    const sessionMemoryStateMap = useViewportStore((s) => s.sessionMemoryState);
 
     // Sync actions
     const sync = useSync();
-    const loadMessages = React.useCallback(
-        (sessionId: string) => sync.syncSession(sessionId),
+    const ensureSessionRenderable = React.useCallback(
+        (sessionId: string) => sync.ensureSessionRenderable(sessionId),
         [sync],
     );
     const loadMoreMessages = React.useCallback(
@@ -342,7 +355,6 @@ export const ChatContainer: React.FC = () => {
     // UI store
     const isExpandedInput = useUIStore((state) => state.isExpandedInput);
     const stickyUserHeader = useUIStore((state) => state.stickyUserHeader);
-    const chatRenderMode = useUIStore((state) => state.chatRenderMode);
     const isTimelineDialogOpen = useUIStore((s) => s.isTimelineDialogOpen);
     const setTimelineDialogOpen = useUIStore((s) => s.setTimelineDialogOpen);
 
@@ -363,9 +375,9 @@ export const ChatContainer: React.FC = () => {
         ),
     );
     const sessionMessageCount = useSessionMessageCount(currentSessionId ?? '');
-    const hasLoadedSessionMessages = useDirectorySync(
+    const hasRenderableSessionSnapshot = useDirectorySync(
         React.useCallback(
-            (state) => (currentSessionId ? state.message[currentSessionId] !== undefined : false),
+            (state) => (currentSessionId ? getSessionMaterializationStatus(state, currentSessionId).renderable : false),
             [currentSessionId],
         ),
     );
@@ -425,10 +437,6 @@ export const ChatContainer: React.FC = () => {
             return false;
         }
 
-        if (streamingMessageId || activeStreamingPhase) {
-            return true;
-        }
-
         const statusType = sessionStatusForCurrent.type ?? 'idle';
         if (statusType === 'busy' || statusType === 'retry') {
             return true;
@@ -440,7 +448,7 @@ export const ChatContainer: React.FC = () => {
             && lastMessage.role === 'assistant'
             && typeof (lastMessage as { time?: { completed?: number } }).time?.completed !== 'number',
         );
-    }, [activeStreamingPhase, currentSessionId, sessionMessages, sessionPermissions.length, sessionQuestions.length, sessionStatusForCurrent.type, streamingMessageId]);
+    }, [currentSessionId, sessionMessages, sessionPermissions.length, sessionQuestions.length, sessionStatusForCurrent.type]);
     const activeRetryStatus = React.useMemo(() => {
         if (!currentSessionId || sessionStatusForCurrent.type !== 'retry') {
             return null;
@@ -526,20 +534,17 @@ export const ChatContainer: React.FC = () => {
                 ? t('chat.container.returnToParent.titleNamed', { title: parentSession.title })
                 : t('chat.container.returnToParent.title')}
         >
-            <RiArrowLeftLine className="h-4 w-4" />
+            <Icon name="arrow-left" className="h-4 w-4" />
             {t('chat.container.returnToParent.label')}
         </Button>
     ) : null;
+    const promptReadOnly = readOnly || Boolean(parentSession);
 
     React.useEffect(() => {
-        if (!currentSessionId && !draftOpen) {
+        if (autoOpenDraft && !currentSessionId && !draftOpen) {
             openNewSessionDraft();
         }
-    }, [currentSessionId, draftOpen, openNewSessionDraft]);
-
-    const sessionBlockingCards = React.useMemo(() => {
-        return [...sessionPermissions, ...sessionQuestions];
-    }, [sessionPermissions, sessionQuestions]);
+    }, [autoOpenDraft, currentSessionId, draftOpen, openNewSessionDraft]);
 
     const activeTurnChangeRef = React.useRef<(turnId: string | null) => void>(() => {});
     const handleActiveTurnChange = React.useCallback((turnId: string | null) => {
@@ -548,24 +553,19 @@ export const ChatContainer: React.FC = () => {
 
     const {
         scrollRef,
-        handleMessageContentChange,
+        notifyContentChange: handleMessageContentChange,
         getAnimationHandlers,
-        prepareForBottomResume,
-        scrollToBottom,
+        goToBottom,
+        releaseAutoFollow,
+        restoreSnapshot,
         isPinned,
-        isOverflowing,
-        isProgrammaticFollowActive,
-        clearRestoreInProgress,
-    } = useChatScrollManager({
+        isFollowingProgrammatically,
+        showScrollButton,
+    } = useChatAutoFollow({
         currentSessionId,
         sessionMessageCount,
         sessionIsWorking,
-        sessionMemoryState: sessionMemoryStateMap,
-        updateViewportAnchor,
-        isSyncing,
         isMobile,
-        chatRenderMode,
-        sessionPermissions: sessionBlockingCards,
         onActiveTurnChange: handleActiveTurnChange,
     });
 
@@ -578,47 +578,16 @@ export const ChatContainer: React.FC = () => {
         scrollRef,
         messageListRef,
         loadMoreMessages,
-        prepareForBottomResume,
-        scrollToBottom,
+        goToBottom,
+        releaseAutoFollow,
         isPinned,
-        isOverflowing,
+        showScrollButton,
     });
-    const { loadEarlier, resumeToBottomInstant, restoreSavedScrollPosition } = timelineController;
+    const { loadEarlier } = timelineController;
 
-    const runLatestInstantResume = React.useCallback(async (options?: { force?: boolean }) => {
-        if (!currentSessionId) {
-            scrollToBottom({ instant: true, force: true });
-            return;
-        }
-
-        if (options?.force) {
-            await resumeToBottomInstant();
-            clearRestoreInProgress(currentSessionId);
-            return;
-        }
-
-        // Check if this session has a saved non-bottom scroll position.
-        const savedMemState = sessionMemoryStateMap.get(currentSessionId);
-        const savedPos = savedMemState?.scrollPosition;
-        if (savedPos && !sessionIsWorking) {
-            const savedMaxScroll = Math.max(0, savedPos.scrollHeight - savedPos.clientHeight);
-            // Use the same pixel threshold as the pin logic: 10% of clientHeight, clamped.
-            const threshold = Math.max(24, Math.min(200, savedPos.clientHeight * 0.10));
-            const distanceFromSavedBottom = savedMaxScroll - savedPos.scrollTop;
-            if (savedMaxScroll > 0 && distanceFromSavedBottom > threshold) {
-                await restoreSavedScrollPosition(savedPos);
-                clearRestoreInProgress(currentSessionId);
-                return;
-            }
-        }
-
-        await resumeToBottomInstant();
-        clearRestoreInProgress(currentSessionId);
-    }, [clearRestoreInProgress, currentSessionId, restoreSavedScrollPosition, resumeToBottomInstant, scrollToBottom, sessionIsWorking, sessionMemoryStateMap]);
-
-    const resumeToLatestInstant = React.useCallback((options?: { force?: boolean }) => {
-        void runLatestInstantResume(options);
-    }, [runLatestInstantResume]);
+    const resumeToLatestInstant = React.useCallback(() => {
+        goToBottom('instant');
+    }, [goToBottom]);
 
     React.useEffect(() => {
         activeTurnChangeRef.current = timelineController.handleActiveTurnChange;
@@ -643,6 +612,21 @@ export const ChatContainer: React.FC = () => {
         scrollToMessage: timelineController.scrollToMessage,
         resumeToBottom: timelineController.resumeToBottomInstant,
     });
+
+    React.useEffect(() => {
+        if (typeof window === 'undefined' || !currentSessionId) return;
+
+        const handleForceScrollBottom = (event: Event) => {
+            const customEvent = event as CustomEvent<{ sessionId?: string }>;
+            if (customEvent.detail?.sessionId && customEvent.detail.sessionId !== currentSessionId) return;
+            goToBottom('instant');
+        };
+
+        window.addEventListener(CHAT_FORCE_SCROLL_BOTTOM_EVENT, handleForceScrollBottom as EventListener);
+        return () => {
+            window.removeEventListener(CHAT_FORCE_SCROLL_BOTTOM_EVENT, handleForceScrollBottom as EventListener);
+        };
+    }, [currentSessionId, goToBottom]);
 
     React.useEffect(() => {
         if (typeof window === 'undefined' || !currentSessionId || isDesktopExpandedInput) {
@@ -687,30 +671,6 @@ export const ChatContainer: React.FC = () => {
         };
     }, [currentSessionId, isDesktopExpandedInput, navigation, scrollRef]);
 
-    React.useEffect(() => {
-        if (typeof window === 'undefined' || !currentSessionId) return;
-
-        const handleForceScrollBottom = (event: Event) => {
-            const customEvent = event as CustomEvent<{ sessionId?: string }>;
-            if (customEvent.detail?.sessionId && customEvent.detail.sessionId !== currentSessionId) return;
-            resumeToLatestInstant({ force: true });
-        };
-
-        const handleSessionReselected = (event: Event) => {
-            const customEvent = event as CustomEvent<string>;
-            if (customEvent.detail !== currentSessionId) return;
-            if (isPinned || !isOverflowing || isProgrammaticFollowActive) return;
-            void resumeToBottomInstant();
-        };
-
-        window.addEventListener(CHAT_FORCE_SCROLL_BOTTOM_EVENT, handleForceScrollBottom as EventListener);
-        window.addEventListener(SESSION_RESELECTED_EVENT, handleSessionReselected as EventListener);
-        return () => {
-            window.removeEventListener(CHAT_FORCE_SCROLL_BOTTOM_EVENT, handleForceScrollBottom as EventListener);
-            window.removeEventListener(SESSION_RESELECTED_EVENT, handleSessionReselected as EventListener);
-        };
-    }, [currentSessionId, isOverflowing, isPinned, isProgrammaticFollowActive, resumeToBottomInstant, resumeToLatestInstant]);
-
     React.useLayoutEffect(() => {
         const container = scrollRef.current;
         if (!container) return;
@@ -751,61 +711,35 @@ export const ChatContainer: React.FC = () => {
 
     const isSessionHydrating =
         Boolean(currentSessionId)
-        && !hasLoadedSessionMessages;
-
-    React.useEffect(() => {
-        if (!currentSessionId) {
-            return;
-        }
-
-        if (lastScrolledSessionRef.current === currentSessionId) {
-            return;
-        }
-
-        const hasHashTarget = typeof window !== 'undefined' && window.location.hash.length > 0;
-        if (hasHashTarget) {
-            lastScrolledSessionRef.current = currentSessionId;
-            clearRestoreInProgress(currentSessionId);
-            return;
-        }
-
-        lastScrolledSessionRef.current = currentSessionId;
-
-        if (typeof window === 'undefined') {
-            resumeToLatestInstant();
-            return;
-        }
-
-        window.requestAnimationFrame(() => {
-            resumeToLatestInstant();
-        });
-    }, [clearRestoreInProgress, currentSessionId, resumeToLatestInstant]);
+        && !hasRenderableSessionSnapshot;
 
     React.useEffect(() => {
         if (!currentSessionId) return;
-        if (hasLoadedSessionMessages) return;
+        if (lastScrolledSessionRef.current === currentSessionId) return;
 
-        const load = async () => {
-            await loadMessages(currentSessionId).finally(() => {
-                const statusType = sessionStatusForCurrent.type ?? 'idle';
-                const isActivePhase = statusType === 'busy' || statusType === 'retry';
-                const hasHashTarget = typeof window !== 'undefined' && window.location.hash.length > 0;
-                const shouldSkipScroll = hasHashTarget || (isActivePhase && isPinned);
+        const hasHashTarget = typeof window !== 'undefined' && window.location.hash.length > 0;
+        lastScrolledSessionRef.current = currentSessionId;
+        if (hasHashTarget) {
+            // Hash navigation handler will scroll to target; we just release auto-follow.
+            releaseAutoFollow();
+            return;
+        }
 
-                if (!shouldSkipScroll) {
-                    if (typeof window === 'undefined') {
-                        resumeToLatestInstant();
-                    } else {
-                        window.requestAnimationFrame(() => {
-                            resumeToLatestInstant();
-                        });
-                    }
-                }
-            });
+        const run = () => {
+            void restoreSnapshot();
         };
+        if (typeof window === 'undefined') {
+            run();
+        } else {
+            window.requestAnimationFrame(run);
+        }
+    }, [currentSessionId, releaseAutoFollow, restoreSnapshot]);
 
-        void load();
-    }, [currentSessionId, hasLoadedSessionMessages, isPinned, loadMessages, resumeToLatestInstant, sessionStatusForCurrent.type]);
+    React.useEffect(() => {
+        if (!currentSessionId) return;
+        if (hasRenderableSessionSnapshot) return;
+        void ensureSessionRenderable(currentSessionId);
+    }, [currentSessionId, ensureSessionRenderable, hasRenderableSessionSnapshot]);
 
 	if (!currentSessionId && !draftOpen) {
 		return (
@@ -831,7 +765,7 @@ export const ChatContainer: React.FC = () => {
 							: 'bg-background'
 					)}
 				>
-						<ChatInput scrollToBottom={resumeToLatestInstant} />
+						{promptReadOnly ? <ReadOnlyPromptBanner /> : <ChatInput scrollToBottom={resumeToLatestInstant} />}
 				</div>
 			</div>
         );
@@ -841,7 +775,7 @@ export const ChatContainer: React.FC = () => {
         return null;
     }
 
-	if (isSessionHydrating && sessionMessages.length === 0 && !streamingMessageId) {
+	if (isSessionHydrating && sessionMessages.length === 0 && !sessionIsWorking) {
 		return (
 			<div className="relative flex flex-col h-full bg-background">
 				{returnToParentButton}
@@ -891,13 +825,13 @@ export const ChatContainer: React.FC = () => {
 							: 'bg-background'
 					)}
 				>
-					<ChatInput scrollToBottom={resumeToLatestInstant} />
+					{promptReadOnly ? <ReadOnlyPromptBanner /> : <ChatInput scrollToBottom={resumeToLatestInstant} />}
 				</div>
             </div>
         );
     }
 
-	if (sessionMessages.length === 0 && !streamingMessageId) {
+	if (sessionMessages.length === 0 && !sessionIsWorking) {
 		return (
 			<div className="relative flex flex-col h-full bg-background transform-gpu">
 				{returnToParentButton}
@@ -924,7 +858,7 @@ export const ChatContainer: React.FC = () => {
 							: 'bg-background'
 					)}
 				>
-					<ChatInput scrollToBottom={resumeToLatestInstant} />
+					{promptReadOnly ? <ReadOnlyPromptBanner /> : <ChatInput scrollToBottom={resumeToLatestInstant} />}
 				</div>
             </div>
         );
@@ -952,10 +886,10 @@ export const ChatContainer: React.FC = () => {
                 handleMessageContentChange={handleMessageContentChange}
                 getAnimationHandlers={getAnimationHandlers}
                 handleLoadOlder={handleLoadOlder}
-                scrollToBottom={scrollToBottom}
+                scrollToBottom={resumeToLatestInstant}
                 sessionQuestions={sessionQuestions}
                 sessionPermissions={sessionPermissions}
-                isProgrammaticFollowActive={isProgrammaticFollowActive}
+                isProgrammaticFollowActive={isFollowingProgrammatically}
             />
 
             <div
@@ -972,7 +906,7 @@ export const ChatContainer: React.FC = () => {
                         onClick={navigation.resumeToLatest}
                     />
                 )}
-                <ChatInput scrollToBottom={resumeToLatestInstant} />
+                {promptReadOnly ? <ReadOnlyPromptBanner /> : <ChatInput scrollToBottom={resumeToLatestInstant} />}
             </div>
 
             <TimelineDialog

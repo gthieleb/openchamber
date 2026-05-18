@@ -1,7 +1,7 @@
 
 import React from 'react';
+import { animate, type AnimationPlaybackControls } from 'motion';
 import { RuntimeAPIContext } from '@/contexts/runtimeAPIContext';
-import { RiArrowDownSLine, RiArrowRightSLine, RiExternalLinkLine } from '@remixicon/react';
 import { PatchDiff } from '@pierre/diffs/react';
 import { cn } from '@/lib/utils';
 import { SimpleMarkdownRenderer } from '../../MarkdownRenderer';
@@ -21,7 +21,7 @@ import { sessionEvents } from '@/lib/sessionEvents';
 import { ScrollShadow } from '@/components/ui/ScrollShadow';
 import { Text } from '@/components/ui/text';
 import { FileTypeIcon } from '@/components/icons/FileTypeIcon';
-import type { ContentChangeReason } from '@/hooks/useChatScrollManager';
+import type { ContentChangeReason } from '@/hooks/useChatAutoFollow';
 import type { ToolPopupContent } from '../types';
 import { ensurePierreThemeRegistered } from '@/lib/shiki/appThemeRegistry';
 import { getDefaultTheme } from '@/lib/theme/themes';
@@ -34,6 +34,7 @@ import {
     tryParseJsonOutput,
 } from '../toolRenderers';
 import { JsonTreeViewer } from '@/components/ui/JsonTreeViewer';
+import { Icon } from "@/components/icon/Icon";
 import { DiffViewToggle, type DiffViewMode } from '../DiffViewToggle';
 import { MinDurationShineText } from './MinDurationShineText';
 import { ToolRevealOnMount } from './ToolRevealOnMount';
@@ -185,6 +186,35 @@ const LiveDuration: React.FC<{ start: number; end?: number; active: boolean }> =
     const now = useDurationTickerNow(active, 250);
 
     return <>{formatDuration(start, end, now)}</>;
+};
+
+const EXPANDED_CONTENT_TRANSITION_MS = 350;
+const EXPANDED_CONTENT_SPRING = { type: 'spring' as const, visualDuration: 0.35, bounce: 0 };
+
+const useAnimatedExpandedContent = (isExpanded: boolean) => {
+    const [shouldRender, setShouldRender] = React.useState(isExpanded);
+
+    React.useEffect(() => {
+        if (typeof window === 'undefined') {
+            setShouldRender(isExpanded);
+            return;
+        }
+
+        if (isExpanded) {
+            setShouldRender(true);
+            return;
+        }
+
+        const timer = window.setTimeout(() => {
+            setShouldRender(false);
+        }, EXPANDED_CONTENT_TRANSITION_MS);
+
+        return () => {
+            window.clearTimeout(timer);
+        };
+    }, [isExpanded]);
+
+    return shouldRender;
 };
 
 const parseDiffStats = (metadata?: Record<string, unknown>): { added: number; removed: number } | null => {
@@ -696,7 +726,6 @@ const ToolScrollableSection: React.FC<ToolScrollableSectionProps> = ({
                 disableHorizontal ? 'overflow-y-auto overflow-x-hidden' : 'overflow-auto',
                 className,
             )}
-            size={24}
         >
             <div className="w-full min-w-0">
                 {children}
@@ -1054,7 +1083,8 @@ const TaskToolSummary: React.FC<{
     isActive?: boolean;
 }> = ({ entries, isExpanded, isMobile, output, sessionId, onShowPopup, input, animateTailText = true, isActive = false }) => {
     const { t } = useI18n();
-    const setCurrentSession = useSessionUIStore((state) => state.setCurrentSession);
+    const currentDirectory = useDirectoryStore((state) => state.currentDirectory);
+    const openContextPanelTab = useUIStore((state) => state.openContextPanelTab);
     const showToolFileIcons = useUIStore((state) => state.showToolFileIcons);
     const displayEntries = entries;
 
@@ -1066,8 +1096,13 @@ const TaskToolSummary: React.FC<{
 
     const handleOpenSession = (event: React.MouseEvent) => {
         event.stopPropagation();
-        if (sessionId) {
-            setCurrentSession(sessionId);
+        if (sessionId && currentDirectory) {
+            openContextPanelTab(currentDirectory, {
+                mode: 'chat',
+                dedupeKey: `session:${sessionId}`,
+                label: agentType.charAt(0).toUpperCase() + agentType.slice(1),
+                readOnly: true,
+            });
         }
     };
 
@@ -1164,7 +1199,7 @@ const TaskToolSummary: React.FC<{
                     onPointerDown={(event) => event.stopPropagation()}
                     onClick={handleOpenSession}
                 >
-                    <RiExternalLinkLine className="h-3.5 w-3.5 flex-shrink-0" />
+                    <Icon name="external-link" className="h-3.5 w-3.5 flex-shrink-0" />
                     <span className="typography-meta text-primary font-medium">{t('chat.toolPart.openSubtask', { type: agentType.charAt(0).toUpperCase() + agentType.slice(1) })}</span>
                 </button>
             )}
@@ -1182,9 +1217,9 @@ const TaskToolSummary: React.FC<{
                         }}
                     >
                         {isOutputExpanded ? (
-                            <RiArrowDownSLine className="h-3.5 w-3.5 flex-shrink-0" />
+                            <Icon name="arrow-down-s" className="h-3.5 w-3.5 flex-shrink-0" />
                         ) : (
-                            <RiArrowRightSLine className="h-3.5 w-3.5 flex-shrink-0" />
+                            <Icon name="arrow-right-s" className="h-3.5 w-3.5 flex-shrink-0" />
                         )}
                         <span className="typography-meta text-foreground/80 font-medium">{t('chat.toolPart.output')}</span>
                     </button>
@@ -1327,20 +1362,20 @@ const renderPathLikeGitChanges = (path: string, grow = true) => {
     );
 };
 
-const renderAnimatedPathWithIcon = (path: string, _animate = true, grow = true, showFileIcons = true) => {
-    void _animate;
+const renderAnimatedPathWithIcon = (path: string, animate = true, grow = true, showFileIcons = true) => {
     const lastSlash = path.lastIndexOf('/');
 
     if (lastSlash === -1) {
         return (
             <span className={cn('min-w-0 inline-flex items-center gap-1 overflow-hidden', grow && 'flex-1')} title={path}>
                 {showFileIcons ? <FileTypeIcon filePath={path} className="h-3.5 w-3.5 flex-shrink-0" /> : null}
-                <span
+                <Text
+                    variant={animate ? 'generate-effect' : 'static'}
                     className={cn('min-w-0 truncate whitespace-nowrap typography-meta', grow && 'flex-1')}
                     style={{ color: 'var(--tools-title)' }}
                 >
                     {path}
-                </span>
+                </Text>
             </span>
         );
     }
@@ -1367,9 +1402,13 @@ const renderAnimatedPathWithIcon = (path: string, _animate = true, grow = true, 
                     {displayDir}
                 </span>
                 <span className="flex-shrink-0" style={{ color: 'var(--tools-description)' }}>/</span>
-                <span className="flex-shrink-0" style={{ color: 'var(--tools-title)' }}>
+                <Text
+                    variant={animate ? 'generate-effect' : 'static'}
+                    className="flex-shrink-0"
+                    style={{ color: 'var(--tools-title)' }}
+                >
                     {name}
-                </span>
+                </Text>
             </span>
         </span>
     );
@@ -1858,21 +1897,81 @@ const ToolPart: React.FC<ToolPartProps> = ({
         sessionEvents.requestGitRefresh({ directory: currentDirectory });
     }, [currentDirectory, isError, isFinalized, normalizedPartTool, part.id, status]);
 
-
-
     const shouldNotifyStructuralChange = isFinalized || isTaskTool;
 
     const onContentChangeRef = React.useRef(onContentChange);
     onContentChangeRef.current = onContentChange;
+    const expandedContentRef = React.useRef<HTMLDivElement>(null);
+    const expandedContentAnimationRef = React.useRef<AnimationPlaybackControls | null>(null);
+    const expandedContentMountedRef = React.useRef(false);
 
-    React.useEffect(() => {
-        if (!shouldNotifyStructuralChange) {
+    React.useLayoutEffect(() => {
+        if (isTaskTool) {
             return;
         }
-        if (typeof isExpanded === 'boolean') {
-            onContentChangeRef.current?.('structural');
+
+        const element = expandedContentRef.current;
+        if (!element) {
+            return;
         }
-    }, [isExpanded, shouldNotifyStructuralChange]);
+
+        expandedContentAnimationRef.current?.stop();
+
+        if (!expandedContentMountedRef.current) {
+            expandedContentMountedRef.current = true;
+            element.style.height = isExpanded ? 'auto' : '0px';
+            element.style.opacity = isExpanded ? '1' : '0';
+            element.style.overflow = isExpanded ? 'visible' : 'hidden';
+            return;
+        }
+
+        element.style.overflow = 'hidden';
+
+        if (isExpanded) {
+            element.style.height = '0px';
+            element.style.opacity = '0';
+        } else {
+            element.style.height = `${element.scrollHeight}px`;
+            element.style.opacity = '1';
+        }
+
+        const animation = animate(
+            element,
+            { height: isExpanded ? 'auto' : '0px', opacity: isExpanded ? 1 : 0 },
+            EXPANDED_CONTENT_SPRING,
+        );
+        expandedContentAnimationRef.current = animation;
+
+        void animation.finished.then(() => {
+            if (expandedContentAnimationRef.current !== animation) {
+                return;
+            }
+            expandedContentAnimationRef.current = null;
+            if (isExpanded) {
+                element.style.overflow = 'visible';
+                element.style.height = 'auto';
+            } else {
+                element.style.overflow = 'hidden';
+            }
+            if (shouldNotifyStructuralChange) {
+                onContentChangeRef.current?.('structural');
+            }
+        }).catch(() => undefined);
+
+        return () => {
+            animation.stop();
+            if (expandedContentAnimationRef.current === animation) {
+                expandedContentAnimationRef.current = null;
+            }
+        };
+    }, [isExpanded, isTaskTool, shouldNotifyStructuralChange]);
+
+    React.useEffect(() => {
+        return () => {
+            expandedContentAnimationRef.current?.stop();
+            expandedContentAnimationRef.current = null;
+        };
+    }, []);
 
     const stateWithData = state as ToolStateWithMetadata;
     const metadata = stateWithData.metadata;
@@ -2393,7 +2492,6 @@ const ToolPart: React.FC<ToolPartProps> = ({
         taskSessionId,
     ]);
 
-
     const taskSummaryLenRef = React.useRef<number>(taskSummaryEntries.length);
     React.useEffect(() => {
         if (!isTaskTool) {
@@ -2495,6 +2593,7 @@ const ToolPart: React.FC<ToolPartProps> = ({
 
     const iconStyle = !isTaskTool && isError ? TOOL_ERROR_ICON_STYLE : TOOL_NORMAL_ICON_STYLE;
     const titleStyle = !isTaskTool && isError ? TOOL_ERROR_TITLE_STYLE : TOOL_NORMAL_TITLE_STYLE;
+    const shouldRenderExpandedContent = useAnimatedExpandedContent(isExpanded);
 
     if (!shouldTreatAsFinalized && !isActive && !isTaskTool) {
         return null;
@@ -2538,7 +2637,7 @@ const ToolPart: React.FC<ToolPartProps> = ({
                                 !isExpanded && (alwaysShowActions ? 'opacity-100' : 'opacity-0 group-hover/tool:opacity-100')
                             )}
                         >
-                            {isExpanded ? <RiArrowDownSLine className="h-3.5 w-3.5" /> : <RiArrowRightSLine className="h-3.5 w-3.5" />}
+                            {isExpanded ? <Icon name="arrow-down-s" className="h-3.5 w-3.5" /> : <Icon name="arrow-right-s" className="h-3.5 w-3.5" />}
                         </div>
                     </div>
                     {isMultiFileApplyPatch ? (
@@ -2638,20 +2737,33 @@ const ToolPart: React.FC<ToolPartProps> = ({
                 />
             ) : null}
 
-            {!isTaskTool && isExpanded ? (
-                <div className="relative ml-2 pl-3">
-                    <span
-                        aria-hidden="true"
-                        className="pointer-events-none absolute left-0 top-px bottom-0 w-px"
-                        style={{ backgroundColor: 'var(--tools-border)' }}
-                    />
-                    <ToolExpandedContent
-                        part={part}
-                        state={state}
-                        syntaxTheme={syntaxTheme}
-                        currentDirectory={currentDirectory}
-                        onShowPopup={onShowPopup}
-                    />
+            {!isTaskTool ? (
+                <div
+                    ref={expandedContentRef}
+                    aria-hidden={!isExpanded}
+                    style={{
+                        height: isExpanded ? 'auto' : '0px',
+                        opacity: isExpanded ? 1 : 0,
+                        overflow: isExpanded ? 'visible' : 'hidden',
+                        overflowAnchor: 'none',
+                    }}
+                >
+                    {shouldRenderExpandedContent ? (
+                        <div className="relative ml-2 pl-3">
+                            <span
+                                aria-hidden="true"
+                                className="pointer-events-none absolute left-0 top-px bottom-0 w-px"
+                                style={{ backgroundColor: 'var(--tools-border)' }}
+                            />
+                            <ToolExpandedContent
+                                part={part}
+                                state={state}
+                                syntaxTheme={syntaxTheme}
+                                currentDirectory={currentDirectory}
+                                onShowPopup={onShowPopup}
+                            />
+                        </div>
+                    ) : null}
                 </div>
             ) : null}
         </div>

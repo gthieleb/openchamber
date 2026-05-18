@@ -12,6 +12,49 @@ export const formatPercent = (value: number | null): string => {
   return `${Math.round(value)}%`;
 };
 
+export const formatQuotaValueLabel = (
+  valueLabel: string | null | undefined,
+  percent: number | null,
+): string => {
+  return valueLabel ?? formatPercent(percent);
+};
+
+export const formatQuotaResetLabel = (
+  resetAt: number | null,
+  fallback?: string | null,
+): string => {
+  if (!resetAt) {
+    return fallback ?? '';
+  }
+
+  try {
+    const resetDate = new Date(resetAt);
+    if (!Number.isFinite(resetDate.getTime())) {
+      return fallback ?? '';
+    }
+
+    const now = new Date();
+    const isToday = resetDate.toDateString() === now.toDateString();
+
+    if (isToday) {
+      return resetDate.toLocaleTimeString(undefined, {
+        hour: 'numeric',
+        minute: '2-digit',
+      });
+    }
+
+    return resetDate.toLocaleString(undefined, {
+      month: 'short',
+      day: 'numeric',
+      weekday: 'short',
+      hour: 'numeric',
+      minute: '2-digit',
+    });
+  } catch {
+    return fallback ?? '';
+  }
+};
+
 export const resolveUsageTone = (percent: number | null): 'safe' | 'warn' | 'critical' => {
   if (percent === null) {
     return 'safe';

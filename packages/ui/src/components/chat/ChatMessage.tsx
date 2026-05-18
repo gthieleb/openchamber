@@ -10,13 +10,12 @@ import { useUIStore } from '@/stores/useUIStore';
 import { useContextStore } from '@/stores/contextStore';
 import { useSessionUIStore } from '@/sync/session-ui-store';
 import { useSelectionStore } from '@/sync/selection-store';
-import * as sessionActions from '@/sync/session-actions';
 import { useDeviceInfo } from '@/lib/device';
 import { useThemeSystem } from '@/contexts/useThemeSystem';
 import { generateSyntaxTheme } from '@/lib/theme/syntaxThemeGenerator';
 import { cn } from '@/lib/utils';
 
-import type { AnimationHandlers, ContentChangeReason } from '@/hooks/useChatScrollManager';
+import type { AnimationHandlers, ContentChangeReason } from '@/hooks/useChatAutoFollow';
 import MessageHeader from './message/MessageHeader';
 import MessageBody from './message/MessageBody';
 import type { AgentMentionInfo } from './message/types';
@@ -127,7 +126,7 @@ interface ChatMessageProps {
     };
     onContentChange?: (reason?: ContentChangeReason) => void;
     animationHandlers?: AnimationHandlers;
-    scrollToBottom?: (options?: { instant?: boolean; force?: boolean }) => void;
+    scrollToBottom?: () => void;
     turnGroupingContext?: TurnGroupingContext;
     assistantHeaderMessageId?: string;
     isInActiveTurn?: boolean;
@@ -158,8 +157,8 @@ const ChatMessage: React.FC<ChatMessageProps> = ({
 
     const getAgentModelForSession = useSelectionStore((s) => s.getAgentModelForSession);
     const getSessionModelSelection = useSelectionStore((s) => s.getSessionModelSelection);
-    const revertToMessage = sessionActions.revertToMessage;
-    const forkFromMessage = sessionActions.forkFromMessage;
+    const revertToMessage = useSessionUIStore((s) => s.revertToMessage);
+    const forkFromMessage = useSessionUIStore((s) => s.forkFromMessage);
 
     streamPerfCount('ui.chat_message.render');
     if (isInActiveTurn) {

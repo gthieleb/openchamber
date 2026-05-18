@@ -23,18 +23,6 @@ import {
   CommandList,
   CommandSeparator,
 } from '@/components/ui/command';
-import {
-  RiGitBranchLine,
-  RiGitRepositoryLine,
-  RiGithubLine,
-  RiLoader4Line,
-  RiRefreshLine,
-  RiErrorWarningLine,
-  RiCheckLine,
-  RiExternalLinkLine,
-  RiCloseLine,
-  RiArrowDownSLine,
-} from '@remixicon/react';
 import { cn } from '@/lib/utils';
 import { useProjectsStore } from '@/stores/useProjectsStore';
 import { useGitHubAuthStore } from '@/stores/useGitHubAuthStore';
@@ -58,6 +46,7 @@ import { useGitBranches, useGitStore, useGitLoadingBranches } from '@/stores/use
 import { GitHubIntegrationDialog } from './GitHubIntegrationDialog';
 import { SortableTabsStrip } from '@/components/ui/sortable-tabs-strip';
 import { MobileOverlayPanel } from '@/components/ui/MobileOverlayPanel';
+import { Icon } from "@/components/icon/Icon";
 import type {
   GitHubIssue,
   GitHubIssueComment,
@@ -129,10 +118,22 @@ const sanitizeRemoteName = (value: string): string => {
   return normalized || 'pr-head';
 };
 
-const resolvePrWorktreeConfig = (pr: GitHubPullRequestSummary, remoteBranches: string[]) => {
+const resolvePrWorktreeConfig = (pr: GitHubPullRequestSummary, localBranches: string[], remoteBranches: string[]) => {
   const headBranch = normalizeBranchName(pr.head || '');
   if (!headBranch) {
     throw new Error('PR head branch is missing');
+  }
+
+  if (localBranches.includes(headBranch)) {
+    return {
+      existingBranch: headBranch,
+      setUpstream: undefined,
+      upstreamRemote: undefined,
+      upstreamBranch: undefined,
+      ensureRemoteName: undefined,
+      ensureRemoteUrl: undefined,
+      sourceLabel: headBranch,
+    };
   }
 
   const availableRemoteBranch = remoteBranches.find((remoteBranch) => {
@@ -297,6 +298,10 @@ export function NewWorktreeDialog({
   const sourceBranchDropdownContentRef = React.useRef<HTMLDivElement | null>(null);
   const existingBranchMobileListWrapperRef = React.useRef<HTMLDivElement | null>(null);
   const sourceBranchMobileListWrapperRef = React.useRef<HTMLDivElement | null>(null);
+
+  const stopDropdownTypeahead = React.useCallback((event: React.KeyboardEvent<HTMLInputElement>) => {
+    event.stopPropagation();
+  }, []);
 
   const findScrollableContainer = React.useCallback((startNode: HTMLElement | null): HTMLElement | null => {
     let node: HTMLElement | null = startNode;
@@ -734,11 +739,15 @@ export function NewWorktreeDialog({
       
       // Only run server validation if we have values
       if (normalizedBranch && normalizedWorktree) {
+        const linkedPr = mode === 'new-branch' ? newBranchState.linkedPr : null;
+        const prConfig = linkedPr ? resolvePrWorktreeConfig(linkedPr, localBranches, remoteBranches) : null;
         const result = await validateWorktreeCreate(projectRef, {
-          mode: mode === 'existing-branch' ? 'existing' : 'new',
+          mode: mode === 'existing-branch' || prConfig ? 'existing' : 'new',
           branchName: normalizedBranch,
           worktreeName: normalizedWorktree,
-          existingBranch: mode === 'existing-branch' ? normalizedBranch : undefined,
+          existingBranch: prConfig?.existingBranch ?? (mode === 'existing-branch' ? normalizedBranch : undefined),
+          ...(prConfig?.ensureRemoteName ? { ensureRemoteName: prConfig.ensureRemoteName } : {}),
+          ...(prConfig?.ensureRemoteUrl ? { ensureRemoteUrl: prConfig.ensureRemoteUrl } : {}),
         });
         
         if (abortController.signal.aborted) return;
@@ -777,8 +786,11 @@ export function NewWorktreeDialog({
     projectRef,
     mode,
     newBranchState.branchName,
+    newBranchState.linkedPr,
     existingBranchState.selectedBranch,
     currentState.worktreeName,
+    localBranches,
+    remoteBranches,
     validation.touched,
     validationAbortController,
     isCreating,
@@ -846,7 +858,7 @@ export function NewWorktreeDialog({
       let sourceLabel = '';
       const args = (() => {
         if (linkedPr) {
-          const prConfig = resolvePrWorktreeConfig(linkedPr, remoteBranches);
+          const prConfig = resolvePrWorktreeConfig(linkedPr, localBranches, remoteBranches);
           sourceLabel = prConfig.sourceLabel;
           return {
             preferredName: normalizedBranch || normalizedWorktree,
@@ -1018,7 +1030,7 @@ export function NewWorktreeDialog({
       <div className={cn('flex items-center gap-1.5 text-destructive', isMobile ? 'w-full justify-center order-first' : 'mr-auto')}> 
         {validation.touched && (validation.branchError || validation.worktreeError) && (
           <>
-            <RiErrorWarningLine className="h-3.5 w-3.5" />
+            <Icon name="error-warning" className="h-3.5 w-3.5" />
             <span className="typography-micro">
               {validation.branchError || validation.worktreeError}
             </span>
@@ -1043,7 +1055,7 @@ export function NewWorktreeDialog({
           disabled={!canCreate || isCreating}
           className={cn('gap-1.5', isMobile && 'flex-1')}
         >
-          {isCreating && <RiLoader4Line className="h-3.5 w-3.5 animate-spin" />}
+          {isCreating && <Icon name="loader-4" className="h-3.5 w-3.5 animate-spin" />}
           {isCreating ? t('session.newWorktree.actions.creating') : t('session.newWorktree.actions.createWorktree')}
         </Button>
       </div>
@@ -1063,8 +1075,8 @@ export function NewWorktreeDialog({
           <div className="w-full mb-4">
             <SortableTabsStrip
               items={[
-                { id: 'new-branch', label: t('session.newWorktree.mode.newBranch'), icon: <RiGitBranchLine className="h-3.5 w-3.5" /> },
-                { id: 'existing-branch', label: t('session.newWorktree.mode.existingBranch'), icon: <RiGitRepositoryLine className="h-3.5 w-3.5" /> },
+                { id: 'new-branch', label: t('session.newWorktree.mode.newBranch'), icon: <Icon name="git-branch" className="h-3.5 w-3.5" /> },
+                { id: 'existing-branch', label: t('session.newWorktree.mode.existingBranch'), icon: <Icon name="git-repository" className="h-3.5 w-3.5" /> },
               ]}
               activeId={mode}
               onSelect={(id) => handleModeChange(id as Mode)}
@@ -1091,7 +1103,7 @@ export function NewWorktreeDialog({
                     <span className={existingBranchState.selectedBranch ? 'text-foreground' : 'text-muted-foreground'}>
                       {existingBranchState.selectedBranch || t('session.newWorktree.chooseBranch')}
                     </span>
-                    <RiGitBranchLine className="h-4 w-4 text-muted-foreground" />
+                    <Icon name="git-branch" className="h-4 w-4 text-muted-foreground" />
                   </Button>
                   <Button
                     variant="ghost"
@@ -1101,7 +1113,7 @@ export function NewWorktreeDialog({
                     disabled={!canFetchBranches || isLoadingBranches}
                     title={t('session.newWorktree.fetchBranches')}
                   >
-                    {isLoadingBranches ? <RiLoader4Line className="size-4 animate-spin" /> : <RiRefreshLine className="size-4" />}
+                    {isLoadingBranches ? <Icon name="loader-4" className="size-4 animate-spin" /> : <Icon name="refresh" className="size-4" />}
                   </Button>
                 </div>
                 
@@ -1247,7 +1259,7 @@ export function NewWorktreeDialog({
                       onClick={() => setGithubDialogOpen(true)}
                       className="gap-1.5 h-7"
                     >
-                      <RiGithubLine className="size-4 text-status-success" />
+                      <Icon name="github" className="size-4 text-status-success" />
                         {newBranchState.linkedIssue || newBranchState.linkedPr ? t('session.newWorktree.actions.change') : t('session.newWorktree.actions.startFromGitHubIssuePr')}
                     </Button>
                   )}
@@ -1274,7 +1286,7 @@ export function NewWorktreeDialog({
                 />
                 {newBranchState.linkedPr && (
                   <div className="flex items-center gap-1.5 text-muted-foreground">
-                    <RiCheckLine className="h-3.5 w-3.5 text-status-success" />
+                    <Icon name="check" className="h-3.5 w-3.5 text-status-success" />
                     <span className="typography-micro">
                       {t('session.newWorktree.usingPrBranch', { branch: newBranchState.linkedPr.head })}
                     </span>
@@ -1282,7 +1294,7 @@ export function NewWorktreeDialog({
                 )}
                 {newBranchState.linkedIssue && !newBranchState.linkedPr && (
                   <div className="flex items-center gap-1.5 text-muted-foreground">
-                    <RiCheckLine className="h-3.5 w-3.5 text-status-success" />
+                    <Icon name="check" className="h-3.5 w-3.5 text-status-success" />
                     <span className="typography-micro">
                       {t('session.newWorktree.fromIssue', { number: newBranchState.linkedIssue.number, title: newBranchState.linkedIssue.title })}
                     </span>
@@ -1316,7 +1328,7 @@ export function NewWorktreeDialog({
                     )}
                     title={t('session.newWorktree.resetToMatchBranchName')}
                   >
-                    <RiRefreshLine className="h-3 w-3" />
+                    <Icon name="refresh" className="h-3 w-3" />
                     <span>{t('session.newWorktree.actions.reset')}</span>
                   </button>
                 )}
@@ -1361,7 +1373,7 @@ export function NewWorktreeDialog({
                   <span className={newBranchState.sourceBranch ? 'text-foreground' : 'text-muted-foreground'}>
                     {newBranchState.sourceBranch || t('session.newWorktree.selectSourceBranchPlaceholder')}
                   </span>
-                  <RiGitBranchLine className="h-4 w-4 text-muted-foreground" />
+                  <Icon name="git-branch" className="h-4 w-4 text-muted-foreground" />
                 </Button>
                 {newBranchState.sourceBranch && (
                   <div className="typography-micro text-muted-foreground">
@@ -1490,7 +1502,7 @@ export function NewWorktreeDialog({
               <div className="mt-2 px-2 py-1.5 rounded bg-muted/30">
                 {/* Row 1: Type, number, title, actions */}
                 <div className="flex items-center gap-2">
-                  <RiGithubLine className="h-3.5 w-3.5 text-status-success shrink-0" />
+                  <Icon name="github" className="h-3.5 w-3.5 text-status-success shrink-0" />
                   
                     {newBranchState.linkedIssue && (
                       <span className="typography-micro text-muted-foreground shrink-0">
@@ -1514,14 +1526,14 @@ export function NewWorktreeDialog({
                     className="text-muted-foreground hover:text-foreground shrink-0"
                     onClick={(e) => e.stopPropagation()}
                   >
-                    <RiExternalLinkLine className="h-3 w-3" />
+                    <Icon name="external-link" className="h-3 w-3" />
                   </a>
                   
                   <button
                     onClick={handleClearLinkedItem}
                     className="text-muted-foreground hover:text-foreground shrink-0 p-0.5 rounded hover:bg-muted transition-colors"
                   >
-                    <RiCloseLine className="h-3.5 w-3.5" />
+                    <Icon name="close" className="h-3.5 w-3.5" />
                   </button>
                 </div>
                 
@@ -1548,7 +1560,7 @@ export function NewWorktreeDialog({
             <DialogHeader className="flex flex-row items-center justify-between">
               <div className="flex items-center gap-3">
                 <DialogTitle className="flex items-center gap-2 shrink-0">
-                  <RiGitBranchLine className="h-5 w-5" />
+                  <Icon name="git-branch" className="h-5 w-5" />
                   {t('session.newWorktree.title')}
                 </DialogTitle>
                 
@@ -1556,8 +1568,8 @@ export function NewWorktreeDialog({
                 <div className="w-[280px] shrink-0">
                   <SortableTabsStrip
                     items={[
-                      { id: 'new-branch', label: t('session.newWorktree.mode.newBranch'), icon: <RiGitBranchLine className="h-3.5 w-3.5" /> },
-                      { id: 'existing-branch', label: t('session.newWorktree.mode.existingBranch'), icon: <RiGitRepositoryLine className="h-3.5 w-3.5" /> },
+                      { id: 'new-branch', label: t('session.newWorktree.mode.newBranch'), icon: <Icon name="git-branch" className="h-3.5 w-3.5" /> },
+                      { id: 'existing-branch', label: t('session.newWorktree.mode.existingBranch'), icon: <Icon name="git-repository" className="h-3.5 w-3.5" /> },
                     ]}
                     activeId={mode}
                     onSelect={(id) => handleModeChange(id as Mode)}
@@ -1583,7 +1595,7 @@ export function NewWorktreeDialog({
                           <span className={cn('truncate', existingBranchState.selectedBranch ? 'text-foreground' : 'text-muted-foreground')}>
                             {existingBranchState.selectedBranch || t('session.newWorktree.chooseBranch')}
                           </span>
-                          <RiArrowDownSLine className="h-4 w-4 shrink-0 text-muted-foreground" />
+                          <Icon name="arrow-down-s" className="h-4 w-4 shrink-0 text-muted-foreground" />
                         </Button>
                       </DropdownMenuTrigger>
                       <DropdownMenuContent align="start" sideOffset={6} portalToBody className="w-[min(42rem,calc(100vw-2rem))] p-0 max-h-[min(var(--available-height),24rem)] flex flex-col overflow-hidden" ref={existingBranchDropdownContentRef}>
@@ -1592,6 +1604,7 @@ export function NewWorktreeDialog({
                           placeholder={t('session.newWorktree.searchBranches')}
                           value={existingBranchQuery}
                           onValueChange={setExistingBranchQuery}
+                          onKeyDown={stopDropdownTypeahead}
                         />
                         <CommandList disableHorizontal>
                           {isLoadingBranches ? (
@@ -1695,7 +1708,7 @@ export function NewWorktreeDialog({
                       disabled={!canFetchBranches || isLoadingBranches}
                       title={t('session.newWorktree.fetchBranches')}
                     >
-                      {isLoadingBranches ? <RiLoader4Line className="size-4 animate-spin" /> : <RiRefreshLine className="size-4" />}
+                      {isLoadingBranches ? <Icon name="loader-4" className="size-4 animate-spin" /> : <Icon name="refresh" className="size-4" />}
                     </Button>
                   </div>
                 </div>
@@ -1712,7 +1725,7 @@ export function NewWorktreeDialog({
                         onClick={() => setGithubDialogOpen(true)}
                         className="gap-1.5 h-7"
                       >
-                        <RiGithubLine className="size-4 text-status-success" />
+                        <Icon name="github" className="size-4 text-status-success" />
                       {newBranchState.linkedIssue || newBranchState.linkedPr ? t('session.newWorktree.actions.change') : t('session.newWorktree.actions.startFromGitHubIssuePr')}
                       </Button>
                     )}
@@ -1739,7 +1752,7 @@ export function NewWorktreeDialog({
                   />
                   {newBranchState.linkedPr && (
                     <div className="flex items-center gap-1.5 text-muted-foreground">
-                      <RiCheckLine className="h-3.5 w-3.5 text-status-success" />
+                      <Icon name="check" className="h-3.5 w-3.5 text-status-success" />
                       <span className="typography-micro">
                         {t('session.newWorktree.usingPrBranch', { branch: newBranchState.linkedPr.head })}
                       </span>
@@ -1747,7 +1760,7 @@ export function NewWorktreeDialog({
                   )}
                   {newBranchState.linkedIssue && !newBranchState.linkedPr && (
                     <div className="flex items-center gap-1.5 text-muted-foreground">
-                      <RiCheckLine className="h-3.5 w-3.5 text-status-success" />
+                      <Icon name="check" className="h-3.5 w-3.5 text-status-success" />
                       <span className="typography-micro">
                         {t('session.newWorktree.fromIssue', { number: newBranchState.linkedIssue.number, title: newBranchState.linkedIssue.title })}
                       </span>
@@ -1781,7 +1794,7 @@ export function NewWorktreeDialog({
                       )}
                       title={t('session.newWorktree.resetToMatchBranchName')}
                     >
-                      <RiRefreshLine className="h-3 w-3" />
+                      <Icon name="refresh" className="h-3 w-3" />
                       <span>{t('session.newWorktree.actions.reset')}</span>
                     </button>
                   )}
@@ -1823,7 +1836,7 @@ export function NewWorktreeDialog({
                         <span className={cn('truncate', newBranchState.sourceBranch ? 'text-foreground' : 'text-muted-foreground')}>
                             {newBranchState.sourceBranch || t('session.newWorktree.selectSourceBranchPlaceholder')}
                         </span>
-                        <RiArrowDownSLine className="h-4 w-4 shrink-0 text-muted-foreground" />
+                        <Icon name="arrow-down-s" className="h-4 w-4 shrink-0 text-muted-foreground" />
                       </Button>
                     </DropdownMenuTrigger>
                     <DropdownMenuContent align="start" portalToBody className="w-[min(42rem,calc(100vw-2rem))] p-0 max-h-[min(var(--available-height),24rem)] flex flex-col overflow-hidden" ref={sourceBranchDropdownContentRef}>
@@ -1832,6 +1845,7 @@ export function NewWorktreeDialog({
                           placeholder={t('session.newWorktree.searchBranches')}
                           value={sourceBranchQuery}
                           onValueChange={setSourceBranchQuery}
+                          onKeyDown={stopDropdownTypeahead}
                         />
                         <CommandList disableHorizontal>
                           {isLoadingBranches ? (
@@ -1925,7 +1939,7 @@ export function NewWorktreeDialog({
                 <div className="mt-2 px-2 py-1.5 rounded bg-muted/30">
                   {/* Row 1: Type, number, title, actions */}
                   <div className="flex items-center gap-2">
-                    <RiGithubLine className="h-3.5 w-3.5 text-status-success shrink-0" />
+                    <Icon name="github" className="h-3.5 w-3.5 text-status-success shrink-0" />
                     
                     {newBranchState.linkedIssue && (
                       <span className="typography-micro text-muted-foreground shrink-0">
@@ -1949,14 +1963,14 @@ export function NewWorktreeDialog({
                       className="text-muted-foreground hover:text-foreground shrink-0"
                       onClick={(e) => e.stopPropagation()}
                     >
-                      <RiExternalLinkLine className="h-3 w-3" />
+                      <Icon name="external-link" className="h-3 w-3" />
                     </a>
                     
                     <button
                       onClick={handleClearLinkedItem}
                       className="text-muted-foreground hover:text-foreground shrink-0 p-0.5 rounded hover:bg-muted transition-colors"
                     >
-                      <RiCloseLine className="h-3.5 w-3.5" />
+                      <Icon name="close" className="h-3.5 w-3.5" />
                     </button>
                   </div>
                   
@@ -1983,7 +1997,7 @@ export function NewWorktreeDialog({
               <div className="flex items-center gap-1.5 text-destructive">
                 {validation.touched && (validation.branchError || validation.worktreeError) && (
                   <>
-                    <RiErrorWarningLine className="h-3.5 w-3.5" />
+                    <Icon name="error-warning" className="h-3.5 w-3.5" />
                     <span className="typography-micro">
                       {validation.branchError || validation.worktreeError}
                     </span>
@@ -2006,7 +2020,7 @@ export function NewWorktreeDialog({
                   disabled={!canCreate || isCreating}
                   className="gap-1.5"
                 >
-                  {isCreating && <RiLoader4Line className="h-3.5 w-3.5 animate-spin" />}
+                  {isCreating && <Icon name="loader-4" className="h-3.5 w-3.5 animate-spin" />}
                   {isCreating ? t('session.newWorktree.actions.creating') : t('session.newWorktree.actions.createWorktree')}
                 </Button>
               </div>

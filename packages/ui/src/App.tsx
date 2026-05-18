@@ -8,16 +8,11 @@ import { MemoryDebugPanel } from '@/components/ui/MemoryDebugPanel';
 import { setStreamPerfEnabled } from '@/stores/utils/streamDebug';
 import { ErrorBoundary } from '@/components/ui/ErrorBoundary';
 // useEventStream removed — replaced by SyncProvider + SyncBridge
-import { useKeyboardShortcuts } from '@/hooks/useKeyboardShortcuts';
 import { useMenuActions } from '@/hooks/useMenuActions';
 import { useSessionStatusBootstrap } from '@/hooks/useSessionStatusBootstrap';
-import { useSessionAutoCleanup } from '@/hooks/useSessionAutoCleanup';
-import { useQueuedMessageAutoSend } from '@/hooks/useQueuedMessageAutoSend';
 import { useRouter } from '@/hooks/useRouter';
 import { usePushVisibilityBeacon } from '@/hooks/usePushVisibilityBeacon';
-import { usePwaManifestSync } from '@/hooks/usePwaManifestSync';
 import { usePwaInstallPrompt } from '@/hooks/usePwaInstallPrompt';
-import { useWindowControlsOverlayLayout } from '@/hooks/useWindowControlsOverlayLayout';
 import { useWindowTitle } from '@/hooks/useWindowTitle';
 import { useConfigStore } from '@/stores/useConfigStore';
 import { hasModifier } from '@/lib/utils';
@@ -36,12 +31,8 @@ import { useSessionUIStore } from '@/sync/session-ui-store';
 import { useDirectoryStore } from '@/stores/useDirectoryStore';
 import { useProjectsStore } from '@/stores/useProjectsStore';
 import { opencodeClient } from '@/lib/opencode/client';
-import { SyncProvider, useSessions } from '@/sync/sync-context';
+import { SyncProvider } from '@/sync/sync-context';
 import { useSync } from '@/sync/use-sync';
-import { setOptimisticRefs } from '@/sync/session-actions';
-import { useFontPreferences } from '@/hooks/useFontPreferences';
-import { CODE_FONT_OPTION_MAP, DEFAULT_MONO_FONT, DEFAULT_UI_FONT, UI_FONT_OPTION_MAP } from '@/lib/fontOptions';
-import { loadMonoFont, loadUiFont } from '@/lib/fontLoader';
 import { ConfigUpdateOverlay } from '@/components/ui/ConfigUpdateOverlay';
 import { AboutDialog } from '@/components/ui/AboutDialog';
 import { RuntimeAPIProvider } from '@/contexts/RuntimeAPIProvider';
@@ -57,18 +48,13 @@ import { MCP_OAUTH_CALLBACK_PATH } from '@/components/sections/mcp/mcpOAuth';
 import { lazyWithChunkRecovery } from '@/lib/chunkLoadRecovery';
 import { useI18n } from '@/lib/i18n';
 import { applyMobileKeyboardMode } from '@/lib/mobileKeyboardMode';
+import { SyncAppEffects } from '@/apps/AppEffects';
+import { useAppFontEffects } from '@/apps/useAppFontEffects';
+import { OpenCodeUpdateToast } from '@/components/update/OpenCodeUpdateToast';
 
 // Lazy-loaded heavy views — loaded on demand to reduce initial bundle size.
 const OnboardingScreen = lazyWithChunkRecovery(() =>
   import('@/components/onboarding/OnboardingScreen').then((m) => ({ default: m.OnboardingScreen })),
-);
-
-const VSCodeLayoutLazy = lazyWithChunkRecovery(() =>
-  import('@/components/layout/VSCodeLayout').then((m) => ({ default: m.VSCodeLayout })),
-);
-
-const AgentManagerViewLazy = lazyWithChunkRecovery(() =>
-  import('@/components/views/agent-manager').then((m) => ({ default: m.AgentManagerView })),
 );
 
 const AboutDialogWrapper: React.FC = () => {
@@ -110,10 +96,16 @@ type AppProps = {
 type EmbeddedSessionChatConfig = {
   sessionId: string;
   directory: string | null;
+  readOnly: boolean;
 };
 
 type EmbeddedVisibilityPayload = {
   visible?: unknown;
+};
+
+const normalizeEmbeddedDirectory = (value: string | null | undefined): string => {
+  if (!value) return '';
+  return value.replace(/\\/g, '/').replace(/\/+$/g, '');
 };
 
 const readEmbeddedSessionChatConfig = (): EmbeddedSessionChatConfig | null => {
@@ -140,6 +132,7 @@ const readEmbeddedSessionChatConfig = (): EmbeddedSessionChatConfig | null => {
   return {
     sessionId,
     directory,
+    readOnly: params.get('readOnly') === '1' || params.get('readOnly') === 'true',
   };
 };
 
@@ -151,61 +144,56 @@ const isMcpOAuthCallbackPath = (): boolean => {
   return window.location.pathname === MCP_OAUTH_CALLBACK_PATH;
 };
 
-const EmbeddedSessionSelectionGate: React.FC<{
-  embeddedSessionChat: EmbeddedSessionChatConfig | null;
+const EmbeddedSessionChatContent: React.FC<{
+  embeddedSessionChat: EmbeddedSessionChatConfig;
   isVSCodeRuntime: boolean;
-}> = ({ embeddedSessionChat, isVSCodeRuntime }) => {
-  const sessions = useSessions();
+  embeddedBackgroundWorkEnabled: boolean;
+}> = ({ embeddedSessionChat, isVSCodeRuntime, embeddedBackgroundWorkEnabled }) => {
+  const currentDirectory = useDirectoryStore((state) => state.currentDirectory);
   const currentSessionId = useSessionUIStore((state) => state.currentSessionId);
   const setCurrentSession = useSessionUIStore((state) => state.setCurrentSession);
-
-  React.useEffect(() => {
-    if (!embeddedSessionChat || isVSCodeRuntime) {
-      return;
-    }
-
-    if (currentSessionId === embeddedSessionChat.sessionId) {
-      return;
-    }
-
-    if (!sessions.some((session) => session.id === embeddedSessionChat.sessionId)) {
-      return;
-    }
-
-    void setCurrentSession(embeddedSessionChat.sessionId);
-  }, [currentSessionId, embeddedSessionChat, isVSCodeRuntime, sessions, setCurrentSession]);
-
-  return null;
-};
-
-const SyncOptimisticBridge: React.FC = () => {
   const sync = useSync();
-  const addRef = React.useRef(sync.optimistic.add);
-  const removeRef = React.useRef(sync.optimistic.remove);
-  addRef.current = sync.optimistic.add;
-  removeRef.current = sync.optimistic.remove;
+  const bootstrapKeyRef = React.useRef<string | null>(null);
+
+  const expectedDirectory = normalizeEmbeddedDirectory(embeddedSessionChat.directory);
+  const activeDirectory = normalizeEmbeddedDirectory(currentDirectory);
 
   React.useEffect(() => {
-    setOptimisticRefs(
-      (input) => addRef.current(input),
-      (input) => removeRef.current(input),
-    );
-  }, []);
+    if (isVSCodeRuntime) return;
+    if (expectedDirectory && activeDirectory !== expectedDirectory) return;
 
-  return null;
+    const bootstrapKey = `${expectedDirectory}\n${embeddedSessionChat.sessionId}`;
+    if (bootstrapKeyRef.current === bootstrapKey && currentSessionId === embeddedSessionChat.sessionId) {
+      return;
+    }
+
+    bootstrapKeyRef.current = bootstrapKey;
+    setCurrentSession(embeddedSessionChat.sessionId, embeddedSessionChat.directory);
+    void sync.ensureSessionRenderable(embeddedSessionChat.sessionId, true);
+  }, [
+    activeDirectory,
+    currentSessionId,
+    embeddedSessionChat.directory,
+    embeddedSessionChat.sessionId,
+    expectedDirectory,
+    isVSCodeRuntime,
+    setCurrentSession,
+    sync,
+  ]);
+
+  if (expectedDirectory && activeDirectory !== expectedDirectory) {
+    return null;
+  }
+
+  return (
+    <>
+      <SyncAppEffects embeddedBackgroundWorkEnabled={embeddedBackgroundWorkEnabled} />
+      <OpenCodeUpdateToast />
+      <ChatView readOnly={embeddedSessionChat.readOnly} />
+      <Toaster />
+    </>
+  );
 };
-
-function SyncAppEffects({ embeddedBackgroundWorkEnabled }: {
-  embeddedBackgroundWorkEnabled: boolean;
-}) {
-  usePwaManifestSync();
-  useWindowControlsOverlayLayout();
-  useSessionAutoCleanup(embeddedBackgroundWorkEnabled);
-  useQueuedMessageAutoSend(embeddedBackgroundWorkEnabled);
-  useKeyboardShortcuts();
-
-  return <SyncOptimisticBridge />;
-}
 
 function App({ apis }: AppProps) {
   const initializeApp = useConfigStore((s) => s.initializeApp);
@@ -221,7 +209,6 @@ function App({ apis }: AppProps) {
   const setDirectory = useDirectoryStore((state) => state.setDirectory);
   const isSwitchingDirectory = useDirectoryStore((state) => state.isSwitchingDirectory);
   const [showMemoryDebug, setShowMemoryDebug] = React.useState(false);
-  const { uiFont, monoFont } = useFontPreferences();
   const refreshGitHubAuthStatus = useGitHubAuthStore((state) => state.refreshStatus);
   const [isVSCodeRuntime, setIsVSCodeRuntime] = React.useState<boolean>(() => apis.runtime.isVSCode);
   const [isEmbeddedVisible, setIsEmbeddedVisible] = React.useState(true);
@@ -281,27 +268,7 @@ function App({ apis }: AppProps) {
     void refreshGitHubAuthStatus(apis.github, { force: true });
   }, [apis.github, embeddedSessionChat, refreshGitHubAuthStatus]);
 
-  React.useEffect(() => {
-    if (typeof document === 'undefined') {
-      return;
-    }
-    const root = document.documentElement;
-    const uiStack = UI_FONT_OPTION_MAP[uiFont]?.stack ?? UI_FONT_OPTION_MAP[DEFAULT_UI_FONT].stack;
-    const monoStack = CODE_FONT_OPTION_MAP[monoFont]?.stack ?? CODE_FONT_OPTION_MAP[DEFAULT_MONO_FONT].stack;
-    void loadUiFont(uiFont);
-    void loadMonoFont(monoFont);
-
-    root.style.setProperty('--font-sans', uiStack);
-    root.style.setProperty('--font-heading', uiStack);
-    root.style.setProperty('--font-family-sans', uiStack);
-    root.style.setProperty('--font-mono', monoStack);
-    root.style.setProperty('--font-family-mono', monoStack);
-    root.style.setProperty('--ui-regular-font-weight', '400');
-
-    if (document.body) {
-      document.body.style.fontFamily = uiStack;
-    }
-  }, [uiFont, monoFont]);
+  useAppFontEffects();
 
   const bootOutcomeKnown = bootInjectionStatus === 'valid';
   const bootViewIsMain = bootView?.screen === 'main';
@@ -582,14 +549,42 @@ function App({ apis }: AppProps) {
     if (typeof window === 'undefined') return;
 
     const handler = (event: Event) => {
-      const detail = (event as CustomEvent<{ sessionId?: string }>).detail;
+      const detail = (event as CustomEvent<{ sessionId?: string; directory?: string }>).detail;
       const sessionId = typeof detail?.sessionId === 'string' ? detail.sessionId.trim() : '';
       if (!sessionId) return;
-      void useSessionUIStore.getState().setCurrentSession(sessionId);
+      const directory = typeof detail?.directory === 'string' && detail.directory.trim().length > 0
+        ? detail.directory.trim()
+        : null;
+      useUIStore.getState().setActiveMainTab('chat');
+      void useSessionUIStore.getState().setCurrentSession(sessionId, directory);
     };
 
     window.addEventListener('openchamber:open-session', handler as EventListener);
     return () => window.removeEventListener('openchamber:open-session', handler as EventListener);
+  }, []);
+
+  React.useEffect(() => {
+    if (typeof window === 'undefined') return;
+
+    const handler = (event: Event) => {
+      const detail = (event as CustomEvent<{ directory?: string; projectId?: string }>).detail;
+      const directory = typeof detail?.directory === 'string' && detail.directory.trim().length > 0
+        ? detail.directory.trim()
+        : null;
+      const projectId = typeof detail?.projectId === 'string' && detail.projectId.trim().length > 0
+        ? detail.projectId.trim()
+        : null;
+      useUIStore.getState().setActiveMainTab('chat');
+      useUIStore.getState().setSessionSwitcherOpen(false);
+      useSessionUIStore.getState().openNewSessionDraft({
+        selectedProjectId: projectId,
+        directoryOverride: directory,
+        preserveDirectoryOverride: Boolean(directory),
+      });
+    };
+
+    window.addEventListener('openchamber:open-draft-session', handler as EventListener);
+    return () => window.removeEventListener('openchamber:open-draft-session', handler as EventListener);
   }, []);
 
   React.useEffect(() => {
@@ -817,10 +812,11 @@ function App({ apis }: AppProps) {
           <RuntimeAPIProvider apis={apis}>
             <TooltipProvider delayDuration={300} skipDelayDuration={150}>
               <div className="h-full text-foreground bg-background">
-                <EmbeddedSessionSelectionGate embeddedSessionChat={embeddedSessionChat} isVSCodeRuntime={isVSCodeRuntime} />
-                <SyncAppEffects embeddedBackgroundWorkEnabled={embeddedBackgroundWorkEnabled} />
-                <ChatView />
-                <Toaster />
+                <EmbeddedSessionChatContent
+                  embeddedSessionChat={embeddedSessionChat}
+                  isVSCodeRuntime={isVSCodeRuntime}
+                  embeddedBackgroundWorkEnabled={embeddedBackgroundWorkEnabled}
+                />
               </div>
             </TooltipProvider>
           </RuntimeAPIProvider>
@@ -848,54 +844,6 @@ function App({ apis }: AppProps) {
     );
   }
 
-  // VS Code runtime - simplified layout without git/terminal views
-  if (isVSCodeRuntime) {
-    // Check if this is the Agent Manager panel
-    const panelType = typeof window !== 'undefined'
-      ? (window as { __OPENCHAMBER_PANEL_TYPE__?: 'chat' | 'agentManager' }).__OPENCHAMBER_PANEL_TYPE__
-      : 'chat';
-
-    if (panelType === 'agentManager') {
-    return (
-      <ErrorBoundary>
-        <SyncProvider sdk={opencodeClient.getSdkClient()} directory={currentDirectory || ''}>
-          <RuntimeAPIProvider apis={apis}>
-            <TooltipProvider delayDuration={300} skipDelayDuration={150}>
-              <div className="h-full text-foreground bg-background">
-                <SyncAppEffects embeddedBackgroundWorkEnabled={embeddedBackgroundWorkEnabled} />
-                <React.Suspense fallback={<div className="h-full" />}>
-                  <AgentManagerViewLazy />
-                </React.Suspense>
-                <Toaster />
-              </div>
-            </TooltipProvider>
-          </RuntimeAPIProvider>
-        </SyncProvider>
-      </ErrorBoundary>
-    );
-    }
-
-    return (
-      <ErrorBoundary>
-        <SyncProvider sdk={opencodeClient.getSdkClient()} directory={currentDirectory || ''}>
-          <RuntimeAPIProvider apis={apis}>
-            <FireworksProvider>
-              <TooltipProvider delayDuration={300} skipDelayDuration={150}>
-                <div className="h-full text-foreground bg-background">
-                  <SyncAppEffects embeddedBackgroundWorkEnabled={embeddedBackgroundWorkEnabled} />
-                  <React.Suspense fallback={<div className="h-full" />}>
-                    <VSCodeLayoutLazy />
-                  </React.Suspense>
-                  <Toaster />
-                </div>
-              </TooltipProvider>
-            </FireworksProvider>
-          </RuntimeAPIProvider>
-        </SyncProvider>
-      </ErrorBoundary>
-    );
-  }
-
   // Always mount the full provider tree to avoid remounts when isInitialized
   // flips from false → true. FireworksProvider and VoiceProvider are lightweight
   // shells; their heavy children are only activated when actually needed.
@@ -910,6 +858,7 @@ function App({ apis }: AppProps) {
               <TooltipProvider delayDuration={300} skipDelayDuration={150}>
                 <div className={isDesktopRuntime ? 'h-full text-foreground bg-transparent' : 'h-full text-foreground bg-background'}>
                   <SyncAppEffects embeddedBackgroundWorkEnabled={embeddedBackgroundWorkEnabled} />
+                  <OpenCodeUpdateToast />
                   <MainLayout />
                   <Toaster />
                   {!isBootShell && (

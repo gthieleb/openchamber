@@ -27,6 +27,45 @@ import {
 // Can be overridden with VITE_OPENCODE_URL for absolute URLs in special deployments
 const DEFAULT_BASE_URL = import.meta.env.VITE_OPENCODE_URL || "/api";
 const ABSOLUTE_URL_PATTERN = /^[a-zA-Z][a-zA-Z\d+\-.]*:\/\//;
+const ID_RANDOM_CHARS = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
+const ID_RANDOM_LENGTH = 14;
+
+let lastIdTimestamp = 0;
+let idCounter = 0;
+
+const randomBase62 = (length: number): string => {
+  const bytes = new Uint8Array(length);
+  if (typeof crypto !== "undefined" && typeof crypto.getRandomValues === "function") {
+    crypto.getRandomValues(bytes);
+  } else {
+    for (let index = 0; index < length; index += 1) {
+      bytes[index] = Math.floor(Math.random() * 256);
+    }
+  }
+
+  let result = "";
+  for (let index = 0; index < length; index += 1) {
+    result += ID_RANDOM_CHARS[bytes[index] % ID_RANDOM_CHARS.length];
+  }
+  return result;
+};
+
+const ascendingId = (prefix: "msg"): string => {
+  const timestamp = Date.now();
+  if (timestamp !== lastIdTimestamp) {
+    lastIdTimestamp = timestamp;
+    idCounter = 0;
+  }
+  idCounter += 1;
+
+  const sortable = BigInt(timestamp) * BigInt(0x1000) + BigInt(idCounter);
+  const timeBytes = new Uint8Array(6);
+  for (let index = 0; index < 6; index += 1) {
+    timeBytes[index] = Number((sortable >> BigInt(40 - 8 * index)) & BigInt(0xff));
+  }
+  const hex = Array.from(timeBytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
+  return `${prefix}_${hex}${randomBase62(ID_RANDOM_LENGTH)}`;
+};
 
 const isRetryableFetchError = (error: unknown): boolean => {
   if (error instanceof DOMException && error.name === 'AbortError') return true;
@@ -631,10 +670,9 @@ class OpencodeService {
       retryCount?: number;
     };
   }): Promise<string> {
-    // Generate a temporary client-side ID for optimistic UI
-    // This ID won't be sent to the server - server will generate its own
-    const baseTimestamp = Date.now();
-    const tempMessageId = params.messageId ?? `temp_${baseTimestamp}_${Math.random().toString(36).substring(2, 9)}`;
+    // Reuse one client-side message ID across retries. The server accepts this
+    // as the real user message ID, making ambiguous network retries idempotent.
+    const messageId = params.messageId ?? ascendingId("msg");
 
     // Build parts array using SDK types (TextPartInput | FilePartInput) plus lightweight agent parts
     const parts: Array<TextPartInput | FilePartInput | AgentPartInputLite> = [];
@@ -757,7 +795,7 @@ class OpencodeService {
             },
             agent: params.agent,
             variant: params.variant,
-            ...(params.messageId ? { messageID: params.messageId } : {}),
+            messageID: messageId,
             ...(params.format ? { format: params.format } : {}),
             parts,
           }),
@@ -778,7 +816,7 @@ class OpencodeService {
 
       if (response.ok) {
         recordProviderSuccess(params.providerID);
-        return tempMessageId;
+        return messageId;
       }
 
       if (shouldRetry(params.providerID, response.status, attempt)) {
@@ -817,8 +855,7 @@ class OpencodeService {
     files?: Array<FileInputLite>;
     messageId?: string;
   }): Promise<string> {
-    const baseTimestamp = Date.now();
-    const tempMessageId = params.messageId ?? `temp_${baseTimestamp}_${Math.random().toString(36).substring(2, 9)}`;
+    const tempMessageId = params.messageId ?? ascendingId("msg");
 
     const parts: FilePartInput[] = [];
     if (params.files && params.files.length > 0) {
@@ -840,7 +877,7 @@ class OpencodeService {
       ...(params.agent ? { agent: params.agent } : {}),
       ...(params.variant ? { variant: params.variant } : {}),
       ...(parts.length > 0 ? { parts } : {}),
-      ...(params.messageId ? { messageID: params.messageId } : {}),
+      messageID: tempMessageId,
     };
 
     const response = await fetch(url.toString(), {
@@ -1286,7 +1323,7 @@ class OpencodeService {
   }
 
   // Command Management
-  async listCommands(): Promise<Array<{ name: string; description?: string; agent?: string; model?: string }>> {
+  async listCommands(): Promise<Array<{ name: string; description?: string; agent?: string; model?: string; source?: string }>> {
     try {
       const response = await this.client.command.list(
         this.currentDirectory ? { directory: this.currentDirectory } : undefined
@@ -1296,7 +1333,8 @@ class OpencodeService {
         name: cmd.name as string,
         description: cmd.description as string | undefined,
         agent: cmd.agent as string | undefined,
-        model: cmd.model as string | undefined
+        model: cmd.model as string | undefined,
+        source: cmd.source as string | undefined,
         // Intentionally excluding template to keep memory usage low
       }));
     } catch {
@@ -1304,7 +1342,7 @@ class OpencodeService {
     }
   }
 
-  async listCommandsWithDetails(): Promise<Array<{ name: string; description?: string; agent?: string; model?: string; template?: string }>> {
+  async listCommandsWithDetails(): Promise<Array<{ name: string; description?: string; agent?: string; model?: string; source?: string; template?: string }>> {
     try {
       const response = await this.client.command.list(
         this.currentDirectory ? { directory: this.currentDirectory } : undefined
@@ -1315,8 +1353,37 @@ class OpencodeService {
         description: cmd.description as string | undefined,
         agent: cmd.agent as string | undefined,
         model: cmd.model as string | undefined,
+        source: cmd.source as string | undefined,
         template: cmd.template as string | undefined,
       }));
+    } catch {
+      return [];
+    }
+  }
+
+  async listSkillsWithDetails(): Promise<Array<{ name: string; description?: string; location: string; content?: string }>> {
+    try {
+      const response = await this.client.app.skills(
+        this.currentDirectory ? { directory: this.currentDirectory } : undefined,
+      );
+      const data = response.data;
+      if (!Array.isArray(data)) {
+        return [];
+      }
+
+      const skills: Array<{ name: string; description?: string; location: string; content?: string }> = [];
+      for (const item of data as Array<Record<string, unknown>>) {
+          const name = typeof item.name === 'string' ? item.name.trim() : '';
+          const location = typeof item.location === 'string' ? item.location : '';
+          if (!name || !location || location === '<built-in>') {
+            continue;
+          }
+          const skill: { name: string; description?: string; location: string; content?: string } = { name, location };
+          if (typeof item.description === 'string') skill.description = item.description;
+          if (typeof item.content === 'string') skill.content = item.content;
+          skills.push(skill);
+      }
+      return skills;
     } catch {
       return [];
     }
@@ -1413,6 +1480,24 @@ class OpencodeService {
 
     const result = await response.json();
     return result;
+  }
+
+  async cloneRepository(input: { remoteUrl: string; destinationPath: string; gitIdentityId?: string | null }): Promise<{ success: boolean; path: string; output?: string }> {
+    const response = await fetch(`${this.baseUrl}/fs/clone`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+      },
+      body: JSON.stringify(input),
+    });
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ error: 'Failed to clone repository' }));
+      throw new Error(error.error || 'Failed to clone repository');
+    }
+
+    return await response.json();
   }
 
   async listLocalDirectory(directoryPath: string | null | undefined, options?: { respectGitignore?: boolean }): Promise<FilesystemEntry[]> {

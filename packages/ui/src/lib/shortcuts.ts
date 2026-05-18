@@ -215,6 +215,12 @@ const SHORTCUT_ACTIONS: ReadonlyArray<ShortcutAction> = [
     customizable: true,
   },
   {
+    id: 'new_mini_chat',
+    defaultCombo: 'mod+alt+n',
+    label: 'New Mini Chat window',
+    description: 'Open a new Mini Chat draft window',
+  },
+  {
     id: 'submit_message',
     defaultCombo: 'mod+enter',
     label: 'Submit message',
@@ -290,6 +296,13 @@ const SHORTCUT_ACTIONS: ReadonlyArray<ShortcutAction> = [
     defaultCombo: 'mod+shift+t',
     label: 'Cycle thinking variant',
     description: 'Cycle thinking variant while in chat',
+  },
+  {
+    id: 'cycle_agent',
+    defaultCombo: 'tab',
+    label: 'Cycle agent',
+    description: 'Cycle agent while the model selector is open',
+    customizable: true,
   },
   {
     id: 'cycle_favorite_model_forward',

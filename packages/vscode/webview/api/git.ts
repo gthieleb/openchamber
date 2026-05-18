@@ -29,6 +29,7 @@ import type {
   GitLogResponse,
   GitLogOptions,
   GitCommitFilesResponse,
+  CommitFileDiffResponse,
   GitIdentitySummary,
   GitIdentityProfile,
   GitRemote,
@@ -41,8 +42,8 @@ export const createVSCodeGitAPI = (): GitAPI => ({
     return sendBridgeMessage<boolean>('api:git/check', { directory });
   },
 
-  getGitStatus: async (directory: string): Promise<GitStatus> => {
-    return sendBridgeMessage<GitStatus>('api:git/status', { directory });
+  getGitStatus: async (directory: string, options?: { mode?: 'light' }): Promise<GitStatus> => {
+    return sendBridgeMessage<GitStatus>('api:git/status', { directory, mode: options?.mode });
   },
 
   getGitDiff: async (directory: string, options: GetGitDiffOptions): Promise<GitDiffResponse> => {
@@ -256,6 +257,15 @@ export const createVSCodeGitAPI = (): GitAPI => ({
     return sendBridgeMessage<GitCommitFilesResponse>('api:git/commit-files', {
       directory,
       hash,
+    });
+  },
+
+  getCommitFileDiff: async (directory: string, hash: string, filePath: string, isBinary: boolean): Promise<CommitFileDiffResponse> => {
+    return sendBridgeMessage<CommitFileDiffResponse>('api:git/commit-file-diff', {
+      directory,
+      hash,
+      path: filePath,
+      binary: isBinary,
     });
   },
 

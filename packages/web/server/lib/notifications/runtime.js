@@ -16,6 +16,14 @@ export const createNotificationTriggerRuntime = (deps) => {
     getOpenCodeAuthHeaders,
   } = deps;
 
+  let getIsWindowFocused = typeof deps.getIsWindowFocused === 'function'
+    ? deps.getIsWindowFocused
+    : null;
+
+  const setGetIsWindowFocused = (cb) => {
+    getIsWindowFocused = typeof cb === 'function' ? cb : null;
+  };
+
   const PUSH_READY_COOLDOWN_MS = 5000;
   const PUSH_QUESTION_DEBOUNCE_MS = 500;
   const PUSH_PERMISSION_DEBOUNCE_MS = 500;
@@ -60,7 +68,24 @@ export const createNotificationTriggerRuntime = (deps) => {
   };
 
   const setCachedSessionParentId = (sessionId, parentID) => {
+    if (!parentID) return;
     sessionParentIdCache.set(sessionId, { parentID: parentID ?? null, at: Date.now() });
+  };
+
+  const getParentIdFromPayload = (payload) => {
+    if (!payload || typeof payload !== 'object') return null;
+    if (payload.type !== 'session.created' && payload.type !== 'session.updated') return null;
+    const parentID = payload.properties?.info?.parentID ?? null;
+    return typeof parentID === 'string' && parentID.length > 0 ? parentID : null;
+  };
+
+  const maybeCacheSessionParentFromPayload = (payload) => {
+    const sessionId = extractSessionIdFromPayload(payload);
+    if (typeof sessionId !== 'string' || sessionId.length === 0) return;
+    const parentID = getParentIdFromPayload(payload);
+    if (parentID) {
+      setCachedSessionParentId(sessionId, parentID);
+    }
   };
 
   const fetchSessionParentId = async (sessionId) => {
@@ -82,12 +107,19 @@ export const createNotificationTriggerRuntime = (deps) => {
         return undefined;
       }
       const data = await response.json().catch(() => null);
-      if (!Array.isArray(data)) {
+      const sessions = Array.isArray(data)
+        ? data
+        : Array.isArray(data?.items)
+          ? data.items
+          : Array.isArray(data?.data)
+            ? data.data
+            : null;
+      if (!sessions) {
         return undefined;
       }
 
-      const match = data.find((session) => session && typeof session === 'object' && session.id === sessionId);
-      const parentID = match?.parentID ? match.parentID : null;
+      const match = sessions.find((session) => session && typeof session === 'object' && session.id === sessionId);
+      const parentID = match?.parentID ?? null;
       setCachedSessionParentId(sessionId, parentID);
       return parentID;
     } catch {
@@ -164,6 +196,8 @@ export const createNotificationTriggerRuntime = (deps) => {
       return;
     }
 
+    maybeCacheSessionParentFromPayload(payload);
+
     const sessionId = extractSessionIdFromPayload(payload);
     if (payload.type === 'message.updated') {
       const info = payload.properties?.info;
@@ -171,8 +205,7 @@ export const createNotificationTriggerRuntime = (deps) => {
         const settings = await readSettingsFromDisk();
 
         if (settings.notifyOnSubtasks === false) {
-          const sessionInfo = payload.properties?.session;
-          const parentIDFromPayload = sessionInfo?.parentID ?? payload.properties?.parentID;
+          const parentIDFromPayload = getParentIdFromPayload(payload);
           const parentID = parentIDFromPayload
             ? parentIDFromPayload
             : await fetchSessionParentId(sessionId);
@@ -183,6 +216,10 @@ export const createNotificationTriggerRuntime = (deps) => {
         }
 
         if (settings.notifyOnCompletion === false) {
+          return;
+        }
+
+        if (settings.notificationMode !== 'always' && getIsWindowFocused?.()) {
           return;
         }
 
@@ -258,6 +295,10 @@ export const createNotificationTriggerRuntime = (deps) => {
         const settings = await readSettingsFromDisk();
         if (settings.notifyOnError === false) return;
 
+        if (settings.notificationMode !== 'always' && getIsWindowFocused?.()) {
+          return;
+        }
+
         let title = 'Tool error';
         let body = 'An error occurred';
 
@@ -327,6 +368,10 @@ export const createNotificationTriggerRuntime = (deps) => {
 
         const settings = await readSettingsFromDisk();
         if (settings.notifyOnQuestion === false) {
+          return;
+        }
+
+        if (settings.notificationMode !== 'always' && getIsWindowFocused?.()) {
           return;
         }
 
@@ -437,9 +482,18 @@ export const createNotificationTriggerRuntime = (deps) => {
       const timer = setTimeout(async () => {
         pushPermissionDebounceTimers.delete(sessionId);
 
+        if (await isSessionAutoAccepting(sessionId)) {
+          if (requestKey) notifiedPermissionRequests.add(requestKey);
+          return;
+        }
+
         const settings = await readSettingsFromDisk();
 
         if (settings.notifyOnQuestion === false) {
+          return;
+        }
+
+        if (settings.notificationMode !== 'always' && getIsWindowFocused?.()) {
           return;
         }
 
@@ -513,5 +567,6 @@ export const createNotificationTriggerRuntime = (deps) => {
   return {
     maybeSendPushForTrigger,
     setAutoAcceptSession,
+    setGetIsWindowFocused,
   };
 };
