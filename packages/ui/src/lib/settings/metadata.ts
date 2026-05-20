@@ -13,6 +13,7 @@ export type SettingsPageSlug =
   | 'skills.installed'
   | 'skills.catalog'
   | 'git'
+  | 'plugin-diagnostics'
   | 'appearance'
   | 'chat'
   | 'shortcuts'
@@ -146,6 +147,14 @@ export const SETTINGS_PAGE_METADATA: readonly SettingsPageMeta[] = [
     kind: 'single',
     keywords: ['git', 'github', 'identity', 'identities', 'ssh', 'profiles', 'credentials', 'keys', 'commit', 'gitmoji', 'oauth', 'prs', 'issues'],
     isAvailable: (ctx) => !ctx.isVSCode,
+  },
+  {
+    slug: 'plugin-diagnostics',
+    title: 'Plugins',
+    group: 'advanced',
+    kind: 'single',
+    description: 'View loaded plugins, their status, capabilities, and contributions.',
+    keywords: ['plugin', 'plugins', 'diagnostics', 'extensions', 'contributions', 'capabilities'],
   },
   {
     slug: 'appearance',

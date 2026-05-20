@@ -23,16 +23,13 @@ import { useEffectiveDirectory } from '@/hooks/useEffectiveDirectory';
 import { useI18n } from '@/lib/i18n';
 import { cn } from '@/lib/utils';
 import { isDesktopShell } from '@/lib/desktop';
+import { renderMainTab } from '@/lib/mainTabRegistry';
+import { renderBottomDockSurface } from '@/lib/bottomDockRegistry';
 import { lazyWithChunkRecovery } from '@/lib/chunkLoadRecovery';
 
-import { ChatView } from '@/components/views/ChatView';
-
-// Heavy views loaded on-demand to reduce initial bundle parse time.
-const PlanView = lazyWithChunkRecovery(() => import('@/components/views/PlanView').then(m => ({ default: m.PlanView })));
+// Views still used directly outside the main tab switch.
+const ChatView = lazyWithChunkRecovery(() => import('@/components/views/ChatView').then(m => ({ default: m.ChatView })));
 const GitView = lazyWithChunkRecovery(() => import('@/components/views/GitView').then(m => ({ default: m.GitView })));
-const DiffView = lazyWithChunkRecovery(() => import('@/components/views/DiffView').then(m => ({ default: m.DiffView })));
-const TerminalView = lazyWithChunkRecovery(() => import('@/components/views/TerminalView').then(m => ({ default: m.TerminalView })));
-const FilesView = lazyWithChunkRecovery(() => import('@/components/views/FilesView').then(m => ({ default: m.FilesView })));
 const SettingsView = lazyWithChunkRecovery(() => import('@/components/views/SettingsView').then(m => ({ default: m.SettingsView })));
 const SettingsWindow = lazyWithChunkRecovery(() => import('@/components/views/SettingsWindow').then(m => ({ default: m.SettingsWindow })));
 const MultiRunWindow = lazyWithChunkRecovery(() => import('@/components/views/MultiRunWindow').then(m => ({ default: m.MultiRunWindow })));
@@ -359,20 +356,8 @@ export const MainLayout: React.FC = () => {
     }, [isMobile, isTablet, setBottomTerminalOpen, setRightSidebarOpen]);
 
     const secondaryView = React.useMemo(() => {
-        switch (activeMainTab) {
-            case 'plan':
-                return <React.Suspense fallback={null}><PlanView /></React.Suspense>;
-            case 'git':
-                return <React.Suspense fallback={null}><GitView /></React.Suspense>;
-            case 'diff':
-                return <React.Suspense fallback={null}><DiffView /></React.Suspense>;
-            case 'terminal':
-                return <React.Suspense fallback={null}><TerminalView /></React.Suspense>;
-            case 'files':
-                return <React.Suspense fallback={null}><FilesView /></React.Suspense>;
-            default:
-                return null;
-        }
+        if (activeMainTab === 'chat') return null;
+        return renderMainTab(activeMainTab);
     }, [activeMainTab]);
 
     const isChatActive = activeMainTab === 'chat';
@@ -708,9 +693,7 @@ export const MainLayout: React.FC = () => {
                                 <BottomTerminalDock isOpen={isBottomTerminalOpen} isMobile={isMobile}>
                                     {isBottomTerminalOpen ? (
                                         <ErrorBoundary>
-                                            <React.Suspense fallback={null}>
-                                                <TerminalView />
-                                            </React.Suspense>
+                                            {renderBottomDockSurface("terminal")}
                                         </ErrorBoundary>
                                     ) : null}
                                 </BottomTerminalDock>

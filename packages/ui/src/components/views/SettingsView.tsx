@@ -9,28 +9,6 @@ import { useSkillsStore } from '@/stores/useSkillsStore';
 import { useSkillsCatalogStore } from '@/stores/useSkillsCatalogStore';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { ErrorBoundary } from '@/components/ui/ErrorBoundary';
-import { AgentsSidebar } from '@/components/sections/agents/AgentsSidebar';
-import { AgentsPage } from '@/components/sections/agents/AgentsPage';
-import { BehaviorPage } from '@/components/sections/behavior/BehaviorPage';
-import { CommandsSidebar } from '@/components/sections/commands/CommandsSidebar';
-import { CommandsPage } from '@/components/sections/commands/CommandsPage';
-import { McpSidebar } from '@/components/sections/mcp/McpSidebar';
-import { McpPage } from '@/components/sections/mcp/McpPage';
-import { SkillsSidebar } from '@/components/sections/skills/SkillsSidebar';
-import { SkillsPage } from '@/components/sections/skills/SkillsPage';
-import { ProjectsSidebar } from '@/components/sections/projects/ProjectsSidebar';
-import { ProjectsPage } from '@/components/sections/projects/ProjectsPage';
-import { RemoteInstancesSidebar } from '@/components/sections/remote-instances/RemoteInstancesSidebar';
-import { RemoteInstancesPage } from '@/components/sections/remote-instances/RemoteInstancesPage';
-import { ProvidersSidebar } from '@/components/sections/providers/ProvidersSidebar';
-import { ProvidersPage } from '@/components/sections/providers/ProvidersPage';
-import { UsageSidebar } from '@/components/sections/usage/UsageSidebar';
-import { UsagePage } from '@/components/sections/usage/UsagePage';
-import { MagicPromptsSidebar } from '@/components/sections/magic-prompts/MagicPromptsSidebar';
-import { MagicPromptsPage } from '@/components/sections/magic-prompts/MagicPromptsPage';
-import { GitPage } from '@/components/sections/git-identities/GitPage';
-import type { OpenChamberSection } from '@/components/sections/openchamber/types';
-import { OpenChamberPage } from '@/components/sections/openchamber/OpenChamberPage';
 import { useDeviceInfo } from '@/lib/device';
 import { isDesktopShell, isVSCodeRuntime, isWebRuntime } from '@/lib/desktop';
 import { useI18n } from '@/lib/i18n';
@@ -38,13 +16,16 @@ import { Icon } from "@/components/icon/Icon";
 import type { IconName } from "@/components/icon/icons";
 import { reloadOpenCodeConfiguration } from '@/stores/useAgentsStore';
 import {
-  SETTINGS_PAGE_METADATA,
   getSettingsPageMeta,
   resolveSettingsSlug,
   type SettingsPageSlug,
   type SettingsRuntimeContext,
-  type SettingsPageMeta,
 } from '@/lib/settings/metadata';
+import {
+  getSettingsPageRegistry,
+  useSettingsPages,
+  resolveSettingsPageSlug,
+} from '@/lib/settingsRegistry';
 
 // Same constraints as main sidebar
 const SETTINGS_NAV_MIN_WIDTH = 176;
@@ -65,43 +46,14 @@ interface SettingsViewProps {
   isWindowed?: boolean;
 }
 
-const pageOrder: SettingsPageSlug[] = [
-  'appearance',
-  'chat',
-  'notifications',
-  'sessions',
-  'shortcuts',
-  'git',
-  'magic-prompts',
-  'projects',
-  'remote-instances',
-  'agents',
-  'behavior',
-  'commands',
-  'mcp',
-  'providers',
-  'usage',
-  'skills.installed',
-  'skills.catalog',
-  'voice',
-  'tunnel',
-];
-
 function buildRuntimeContext(isDesktop: boolean): SettingsRuntimeContext {
   const isVSCode = isVSCodeRuntime();
   const isWeb = !isDesktop && isWebRuntime();
   return { isVSCode, isWeb, isDesktop };
 }
 
-function isPageAvailable(page: SettingsPageMeta, ctx: SettingsRuntimeContext): boolean {
-  if (!page.isAvailable) {
-    return true;
-  }
-  return page.isAvailable(ctx);
-}
-
 // eslint-disable-next-line react-refresh/only-export-components
-export function getSettingsNavIcon(slug: SettingsPageSlug): IconName | null {
+export function getSettingsNavIcon(slug: string): IconName | null {
   switch (slug) {
     case 'projects':
       return 'folders';
@@ -138,6 +90,9 @@ export function getSettingsNavIcon(slug: SettingsPageSlug): IconName | null {
 
     case 'git':
       return 'git-branch';
+
+    case 'plugin-diagnostics':
+      return 'code-box';
 
     case 'usage':
       return 'bar-chart-2';
@@ -256,20 +211,13 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose, forceMobile
 
   const runtimeCtx = React.useMemo(() => buildRuntimeContext(isDesktopApp), [isDesktopApp]);
 
-  const visiblePages = React.useMemo(() => {
-    return SETTINGS_PAGE_METADATA
-      .filter((page) => page.slug !== 'home')
-      .filter((page) => isPageAvailable(page, runtimeCtx))
-      .filter((page) => !(runtimeCtx.isVSCode && page.slug === 'projects'))
-      .filter((page) => !(isMobile && page.slug === 'shortcuts'));
-  }, [runtimeCtx, isMobile]);
+  const registryPages = useSettingsPages(runtimeCtx);
 
   const sortedFilteredPages = React.useMemo(() => {
-    const rank = new Map<SettingsPageSlug, number>(pageOrder.map((s, i) => [s, i]));
-    return visiblePages
-      .slice()
-      .sort((a, b) => (rank.get(a.slug) ?? 999) - (rank.get(b.slug) ?? 999));
-  }, [visiblePages]);
+    return registryPages
+      .filter((page) => !(runtimeCtx.isVSCode && page.slug === 'projects'))
+      .filter((page) => !(isMobile && page.slug === 'shortcuts'));
+  }, [registryPages, runtimeCtx, isMobile]);
 
   const activeProjectId = useProjectsStore((state) => state.activeProjectId);
 
@@ -359,13 +307,14 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose, forceMobile
     }
   }, [activeProjectId, isSettingsDialogOpen, isWindowed, runtimeCtx.isVSCode, settingsSlug]);
 
-  const openPage = React.useCallback((slug: SettingsPageSlug) => {
-    setSettingsPage(slug);
-    autoNavSlugRef.current = slug;
+  const openPage = React.useCallback((slug: string) => {
+    const resolved = resolveSettingsPageSlug(slug);
+    setSettingsPage(resolved);
+    autoNavSlugRef.current = resolved;
     if (!isMobile) {
       return;
     }
-    const def = getSettingsPageMeta(slug);
+    const def = getSettingsPageMeta(resolved);
     if (!def || def.slug === 'home') {
       setMobileStage('nav');
       return;
@@ -379,17 +328,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose, forceMobile
 
   // Nav is always open (collapsed state removed)
 
-  const openChamberSectionBySlug: Partial<Record<SettingsPageSlug, OpenChamberSection>> = React.useMemo(() => ({
-    appearance: 'visual',
-    chat: 'chat',
-    shortcuts: 'shortcuts',
-    sessions: 'sessions',
-    notifications: 'notifications',
-    voice: 'voice',
-    tunnel: 'tunnel',
-  }), []);
-
-  const getPageTitle = React.useCallback((slug: SettingsPageSlug): string => {
+  const getPageTitle = React.useCallback((slug: string): string => {
     switch (slug) {
       case 'projects':
         return t('settings.page.projects.title');
@@ -446,78 +385,29 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose, forceMobile
     );
   }, [t]);
 
-  const renderPageSidebar = React.useCallback((slug: SettingsPageSlug, opts: { onItemSelect?: () => void }) => {
-    switch (slug) {
-      case 'projects':
-        return <ProjectsSidebar onItemSelect={opts.onItemSelect} />;
-      case 'remote-instances':
-        return <RemoteInstancesSidebar onItemSelect={opts.onItemSelect} />;
-      case 'agents':
-        return <AgentsSidebar onItemSelect={opts.onItemSelect} />;
-      case 'commands':
-        return <CommandsSidebar onItemSelect={opts.onItemSelect} />;
-      case 'mcp':
-        return <McpSidebar onItemSelect={opts.onItemSelect} />;
-      case 'skills.installed':
-        return <SkillsSidebar onItemSelect={opts.onItemSelect} />;
-      case 'providers':
-        return <ProvidersSidebar onItemSelect={opts.onItemSelect} />;
-      case 'usage':
-        return <UsageSidebar onItemSelect={opts.onItemSelect} />;
-      case 'magic-prompts':
-        return <MagicPromptsSidebar onItemSelect={opts.onItemSelect} />;
-      default:
-        return null;
-    }
+  const renderPageSidebar = React.useCallback((slug: string, opts: { onItemSelect?: () => void }) => {
+    const reg = getSettingsPageRegistry();
+    const page = reg.getPage(slug);
+    if (!page || !page.renderSidebar) return null;
+
+    const SidebarComponent = page.renderSidebar;
+    return <SidebarComponent onItemSelect={opts.onItemSelect} />;
   }, []);
 
-  const renderPageContent = React.useCallback((slug: SettingsPageSlug) => {
-    const meta = getSettingsPageMeta(slug);
-    if (meta && !isPageAvailable(meta, runtimeCtx)) {
+  const renderPageContent = React.useCallback((slug: string) => {
+    if (slug === 'home') {
+      return <SettingsHome onOpen={openPage} />;
+    }
+
+    const reg = getSettingsPageRegistry();
+    const page = reg.getPage(slug);
+    if (!page || !page.renderContent) {
       return renderUnavailable();
     }
 
-    switch (slug) {
-      case 'home':
-        return <SettingsHome onOpen={openPage} />;
-      case 'projects':
-        return <ProjectsPage />;
-      case 'remote-instances':
-        return <RemoteInstancesPage />;
-      case 'agents':
-        return <AgentsPage />;
-      case 'behavior':
-        return <BehaviorPage />;
-      case 'commands':
-        return <CommandsPage />;
-      case 'mcp':
-        return <McpPage />;
-      case 'skills.installed':
-        return <SkillsPage view="installed" />;
-      case 'skills.catalog':
-        return <SkillsPage view="catalog" />;
-      case 'providers':
-        return <ProvidersPage />;
-      case 'usage':
-        return <UsagePage />;
-      case 'magic-prompts':
-        return <MagicPromptsPage />;
-      case 'git':
-        return <GitPage />;
-      case 'appearance':
-      case 'chat':
-      case 'shortcuts':
-      case 'sessions':
-      case 'notifications':
-      case 'voice':
-      case 'tunnel': {
-        const section = openChamberSectionBySlug[slug] ?? 'visual';
-        return <OpenChamberPage section={section} />;
-      }
-      default:
-        return <SettingsHome onOpen={openPage} />;
-    }
-  }, [openChamberSectionBySlug, openPage, renderUnavailable, runtimeCtx]);
+    const ContentComponent = page.renderContent;
+    return <ContentComponent />;
+  }, [openPage, renderUnavailable]);
 
   // Mobile: if opened via deep-link / palette to a non-home page, jump into it once.
   React.useEffect(() => {

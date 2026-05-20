@@ -169,7 +169,7 @@ Notes:
 
 ### PLUG-WORKBENCH-003: Bottom Dock Generalization
 
-Status: [ ]
+Status: [x]
 
 Depends on:
 
@@ -196,19 +196,23 @@ Scope:
 
 Implementation checklist:
 
-- [ ] Add bottom dock surface placement.
-- [ ] Preserve current terminal open/fullscreen state.
-- [ ] Add fallback if active bottom surface is disabled.
-- [ ] Keep mobile behavior unchanged.
+- [x] Add bottom dock surface placement.
+- [x] Preserve current terminal open/fullscreen state.
+- [x] Add fallback if active bottom surface is disabled.
+- [x] Keep mobile behavior unchanged.
 
 Acceptance criteria:
 
-- [ ] Terminal can render through bottom dock surface placement.
-- [ ] Future surfaces can target bottom dock without terminal-specific code.
+- [x] Terminal can render through bottom dock surface placement.
+- [x] Future surfaces can target bottom dock without terminal-specific code.
 
 Notes:
 
-- Do not expand scope to a full dock tab system unless needed for POC.
+- Created `BottomDockRegistry` in `packages/plugin/src/bottom-dock-registry.ts` with types in `bottom-dock-types.ts`.
+- Created UI bridge in `packages/ui/src/lib/bottomDockRegistry.tsx` that registers terminal as the default core surface.
+- Updated `MainLayout.tsx` to use `renderBottomDockSurface("terminal")` instead of hardcoded `TerminalView`.
+- `BottomTerminalDock` component remains unchanged (already generic via `children` prop).
+- 9 tests added for registry behavior (registration, sorting, filtering, fallback, sanitization).
 
 ### PLUG-WORKBENCH-004: Context Panel Renderer Registry
 
@@ -267,7 +271,7 @@ Notes:
 
 ### PLUG-FEATURE-TERMINAL-001: Terminal Built-In Plugin
 
-Status: [ ]
+Status: [x]
 
 Depends on:
 
@@ -282,6 +286,8 @@ Current files:
 - `packages/ui/src/stores/useTerminalStore.ts`
 - `packages/web/server/lib/terminal/runtime.js`
 - `packages/web/src/api/terminal.ts`
+- `packages/web/server/lib/plugins/builtins/terminal.js`
+- `packages/web/server/lib/opencode/startup-pipeline-runtime.js`
 
 Target plugin:
 
@@ -300,22 +306,26 @@ Scope:
 
 Implementation checklist:
 
-- [ ] Register terminal main surface.
-- [ ] Register terminal bottom dock surface.
-- [ ] Register terminal server routes/runtime.
-- [ ] Gate terminal by `openchamber.feature.terminal`.
-- [ ] Keep VS Code terminal unavailable/stub behavior explicit.
-- [ ] Add disabled UI and disabled route tests.
+- [x] Register terminal main surface.
+- [x] Register terminal bottom dock surface.
+- [x] Register terminal server routes/runtime.
+- [x] Gate terminal by `openchamber.feature.terminal`.
+- [x] Keep VS Code terminal unavailable/stub behavior explicit.
+- [x] Add disabled UI and disabled route tests.
 
 Acceptance criteria:
 
-- [ ] Terminal works exactly as before when enabled.
-- [ ] Disabled terminal removes UI and route access.
-- [ ] Diagnostics show terminal contributions.
+- [x] Terminal works exactly as before when enabled.
+- [x] Disabled terminal removes UI and route access.
+- [x] Diagnostics show terminal contributions.
 
 Notes:
 
-- Terminal is high-risk because it spawns processes.
+- Terminal runtime is created in `startup-pipeline-runtime.js` only if `openchamber.feature.terminal` is enabled.
+- Routes are registered via `TERMINAL_SERVER_PLUGIN` in `builtins/terminal.js` with `featureId` gating.
+- UI bottom dock surface registered in `bottomDockRegistry.tsx` with `featureId: "openchamber.feature.terminal"`.
+- Graceful shutdown handles null terminalRuntime when feature is disabled.
+- `terminalFeatureEnabled` flag exposed via startup pipeline result and graceful shutdown runtime.
 
 ### PLUG-FEATURE-FILES-001: Files Built-In Plugin
 

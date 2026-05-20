@@ -11,6 +11,13 @@
     "lint": "eslint \"./src/**/*.{ts,tsx}\" --config ../../eslint.config.js"
   },
   "dependencies": {
+    "@openchamber/plugin": "workspace:*",
+    "@openchamber/plugin-terminal": "workspace:*",
+    "@openchamber/plugin-files": "workspace:*",
+    "@openchamber/plugin-git": "workspace:*",
+    "@openchamber/plugin-github": "workspace:*",
+    "@openchamber/plugin-chat": "workspace:*",
+    "@openchamber/plugin-hello-world": "workspace:*",
     "@codemirror/autocomplete": "^6.20.0",
     "@codemirror/commands": "^6.10.1",
     "@codemirror/lang-cpp": "^6.0.3",

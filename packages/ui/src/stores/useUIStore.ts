@@ -7,9 +7,13 @@ import type { ShortcutCombo } from '@/lib/shortcuts';
 import { DEFAULT_MONO_FONT, DEFAULT_UI_FONT, type MonoFontOption, type UiFontOption } from '@/lib/fontOptions';
 import { getStoredMobileKeyboardMode, type MobileKeyboardMode } from '@/lib/mobileKeyboardMode';
 
-export type MainTab = 'chat' | 'plan' | 'git' | 'diff' | 'terminal' | 'files';
-export type RightSidebarTab = 'git' | 'files' | 'context';
-export type ContextPanelMode = 'diff' | 'file' | 'context' | 'plan' | 'chat' | 'preview' | 'browser';
+export type MainTab = string;
+export type RightSidebarTab = string;
+export type ContextPanelMode = string;
+
+export const CORE_MAIN_TABS = ['chat', 'plan', 'git', 'diff', 'terminal', 'files'] as const;
+export const CORE_RIGHT_SIDEBAR_TABS = ['git', 'files', 'context'] as const;
+export const CORE_CONTEXT_PANEL_MODES = ['diff', 'file', 'context', 'plan', 'chat', 'preview', 'browser'] as const;
 export type MermaidRenderingMode = 'svg' | 'ascii';
 export type UserMessageRenderingMode = 'markdown' | 'plain';
 export type ChatRenderMode = 'sorted' | 'live';
@@ -246,7 +250,7 @@ const sanitizeContextPanelTabs = (tabs: unknown): ContextPanelTab[] => {
       touchedAt?: unknown;
     };
 
-    if (candidate.mode !== 'diff' && candidate.mode !== 'file' && candidate.mode !== 'context' && candidate.mode !== 'plan' && candidate.mode !== 'chat' && candidate.mode !== 'preview' && candidate.mode !== 'browser') {
+    if (typeof candidate.mode !== 'string' || candidate.mode.length === 0) {
       continue;
     }
 
@@ -1996,8 +2000,7 @@ export const useUIStore = create<UIStore>()(
           }
 
           if (
-            typeof state.rightSidebarTab !== 'string'
-            || (state.rightSidebarTab !== 'git' && state.rightSidebarTab !== 'files' && state.rightSidebarTab !== 'context')
+            typeof state.rightSidebarTab !== 'string' || state.rightSidebarTab.length === 0
           ) {
             state.rightSidebarTab = 'git';
           }

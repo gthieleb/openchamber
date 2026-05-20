@@ -32,6 +32,7 @@ import {
     formatInputForDisplay,
     tryParseJsonOutput,
 } from '../toolRenderers';
+import { useToolRenderer } from '@/lib/toolRendererRegistry';
 import { JsonTreeViewer } from '@/components/ui/JsonTreeViewer';
 import { Icon } from "@/components/icon/Icon";
 import { DiffViewToggle, type DiffViewMode } from '../DiffViewToggle';
@@ -1521,6 +1522,9 @@ const ToolExpandedContent: React.FC<ToolExpandedContentProps> = React.memo(({
     const hasStringOutput = typeof rawOutput === 'string' && rawOutput.length > 0;
     const outputString = typeof rawOutput === 'string' ? rawOutput : '';
 
+    const normalizedToolName = React.useMemo(() => normalizeToolName(part.tool), [part.tool]);
+    const renderer = useToolRenderer(normalizedToolName);
+
     const diffContent = getPatchText((metadata as { patch?: unknown } | undefined)?.patch)
         ?? getPatchText(metadata?.diff)
         ?? null;
@@ -1586,6 +1590,35 @@ const ToolExpandedContent: React.FC<ToolExpandedContentProps> = React.memo(({
     );
 
     const renderResultContent = () => {
+        if (renderer) {
+            const RendererComponent = renderer.render as React.ComponentType<{
+                toolName: string;
+                input: Record<string, unknown> | undefined;
+                output: string | undefined;
+                error: string | undefined;
+                metadata: Record<string, unknown> | undefined;
+                state: Record<string, unknown> | undefined;
+                isExpanded: boolean;
+                isMobile: boolean;
+                isActive: boolean;
+                renderScrollable?: (content: React.ReactNode, options?: { className?: string }) => React.ReactNode;
+            }>;
+            return (
+                <RendererComponent
+                    toolName={normalizedToolName}
+                    input={input}
+                    output={rawOutput ?? undefined}
+                    error={stateWithData.error}
+                    metadata={metadata}
+                    state={stateWithData}
+                    isExpanded={true}
+                    isMobile={false}
+                    isActive={false}
+                    renderScrollable={renderScrollableBlock}
+                />
+            );
+        }
+
         const renderDiagnosticsSection = () => {
             if (!diagnosticSection) {
                 return null;

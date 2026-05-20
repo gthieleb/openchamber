@@ -1,0 +1,26 @@
+{
+  "name": "@openchamber/plugin",
+  "version": "1.11.1",
+  "private": true,
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "scripts": {
+    "type-check": "tsc --noEmit",
+    "lint": "eslint \"./src/**/*.{ts,tsx}\" --config ../../eslint.config.js",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@openchamber/plugin-terminal": "workspace:*",
+    "@openchamber/plugin-files": "workspace:*",
+    "@openchamber/plugin-git": "workspace:*",
+    "@openchamber/plugin-github": "workspace:*",
+    "@openchamber/plugin-chat": "workspace:*",
+    "@openchamber/plugin-hello-world": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^24.3.1",
+    "typescript": "~5.8.3",
+    "vitest": "^4.1.4"
+  }
+}

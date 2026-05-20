@@ -291,8 +291,9 @@ export const useKeyboardShortcuts = () => {
         }
 
         const tabs = ['git', 'files', 'context'] as const;
-        const currentIndex = tabs.indexOf(rightSidebarTab);
-        const nextTab = tabs[(currentIndex + 1) % tabs.length];
+        const currentIndex = tabs.indexOf(rightSidebarTab as (typeof tabs)[number]);
+        const nextIndex = currentIndex < 0 ? 0 : (currentIndex + 1) % tabs.length;
+        const nextTab = tabs[nextIndex];
 
         e.preventDefault();
         setRightSidebarOpen(true);

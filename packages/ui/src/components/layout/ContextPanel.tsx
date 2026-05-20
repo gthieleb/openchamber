@@ -3,9 +3,6 @@ import React from 'react';
 import { FileTypeIcon } from '@/components/icons/FileTypeIcon';
 import { Button } from '@/components/ui/button';
 import { SortableTabsStrip } from '@/components/ui/sortable-tabs-strip';
-import { DiffView } from '@/components/views/DiffView';
-import { FilesView } from '@/components/views/FilesView';
-import { PlanView } from '@/components/views/PlanView';
 import { useThemeSystem } from '@/contexts/useThemeSystem';
 import { openExternalUrl } from '@/lib/url';
 import { copyTextToClipboard } from '@/lib/clipboard';
@@ -17,11 +14,12 @@ import { useUIStore, type ContextPanelMode } from '@/stores/useUIStore';
 import { useInlineCommentDraftStore } from '@/stores/useInlineCommentDraftStore';
 import { useSessionUIStore } from '@/sync/session-ui-store';
 import { useInputStore } from '@/sync/input-store';
-import { ContextPanelContent } from './ContextSidebarTab';
 import { toast } from '@/components/ui';
 import { Icon } from "@/components/icon/Icon";
 import { OpenChamberLogo } from "@/components/ui/OpenChamberLogo";
 import { invokeDesktopCommand } from '@/lib/desktopNative';
+import { FilesView } from '@/components/views/FilesView';
+import { renderContextPanelMode } from '@/lib/contextPanelRegistry';
 
 const CONTEXT_PANEL_MIN_WIDTH = 360;
 const CONTEXT_PANEL_MAX_WIDTH = 1400;
@@ -549,6 +547,7 @@ const getCachedProxyTarget = (url: string): CachedProxyTarget | null => {
   return entry;
 };
 
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 const PreviewPane: React.FC<PreviewPaneProps> = ({ rawUrl, onNavigate }) => {
   const { t } = useI18n();
   const { currentTheme } = useThemeSystem();
@@ -1556,7 +1555,6 @@ export const ContextPanel: React.FC = () => {
   const reorderContextPanelTabs = useUIStore((state) => state.reorderContextPanelTabs);
   const setPendingDiffFile = useUIStore((state) => state.setPendingDiffFile);
   const setSelectedFilePath = useFilesViewTabsStore((state) => state.setSelectedPath);
-  const openContextPreview = useUIStore((state) => state.openContextPreview);
   const { themeMode, lightThemeId, darkThemeId, currentTheme } = useThemeSystem();
 
   const tabs = React.useMemo(() => panelState?.tabs ?? [], [panelState?.tabs]);
@@ -1796,21 +1794,12 @@ export const ContextPanel: React.FC = () => {
     };
   }), [effectiveDirectory, t, tabs]);
 
-  const activeNonChatContent = activeTab?.mode === 'diff'
-    ? <DiffView hideStackedFileSidebar stackedDefaultCollapsedAll hideFileSelector pinSelectedFileHeaderToTopOnNavigate showOpenInEditorAction />
-    : activeTab?.mode === 'context'
-        ? <ContextPanelContent />
-        : activeTab?.mode === 'plan'
-            ? <PlanView targetPath={activeTab.targetPath} />
-            : activeTab?.mode === 'preview'
-                ? <PreviewPane rawUrl={activeTab.targetPath ?? ''} onNavigate={(url) => openContextPreview(effectiveDirectory, url)} />
-                : (
-                  <div className="flex h-full flex-col items-center justify-center gap-3 p-6 text-center">
-                    <Icon name="global" className="h-12 w-12 text-muted-foreground/50" />
-                    <div className="typography-ui-header text-foreground">{t('contextPanel.preview.title')}</div>
-                    <div className="max-w-sm typography-micro text-muted-foreground">{t('contextPanel.preview.description')}</div>
-                  </div>
-                );
+  const activeNonChatContent = activeTab
+    ? renderContextPanelMode(activeTab.mode, {
+        targetPath: activeTab.targetPath,
+        readOnly: activeTab.readOnly,
+      })
+    : null;
 
   const chatTabs = React.useMemo(
     () => tabs.filter((tab) => tab.mode === 'chat'),

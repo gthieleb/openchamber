@@ -1,7 +1,4 @@
-import { registerFsRoutes } from '../fs/routes.js';
 import { registerQuotaRoutes } from '../quota/routes.js';
-import { registerGitHubRoutes } from '../github/routes.js';
-import { registerGitRoutes } from '../git/routes.js';
 import { registerMagicPromptRoutes } from '../magic-prompts/routes.js';
 import { registerSessionFoldersRoutes } from '../session-folders/routes.js';
 import { registerConfigEntityRoutes } from './config-entity-routes.js';
@@ -212,8 +209,6 @@ export const createFeatureRoutesRuntime = (dependencies) => {
     });
 
     registerQuotaRoutes(app, { getQuotaProviders });
-    registerGitHubRoutes(app);
-    registerGitRoutes(app);
     registerMagicPromptRoutes(app, {
       fsPromises,
       path,
@@ -223,18 +218,6 @@ export const createFeatureRoutesRuntime = (dependencies) => {
       fsPromises,
       path,
       openchamberDataDir,
-    });
-    registerFsRoutes(app, {
-      os,
-      path,
-      fsPromises,
-      spawn,
-      crypto,
-      normalizeDirectoryPath,
-      resolveProjectDirectory,
-      buildAugmentedPath,
-      resolveGitBinaryForSpawn,
-      openchamberUserConfigRoot,
     });
   };
 

@@ -67,6 +67,7 @@ import { createOpenCodeWatcherRuntime } from './lib/opencode/watcher.js';
 import { createScheduledTasksRuntime } from './lib/scheduled-tasks/runtime.js';
 import { createServerStartupRuntime } from './lib/opencode/server-startup-runtime.js';
 import { createTunnelWiringRuntime } from './lib/opencode/tunnel-wiring-runtime.js';
+import { createPluginDiagnostics } from './lib/plugins/diagnostics.js';
 import { createStartupPipelineRuntime } from './lib/opencode/startup-pipeline-runtime.js';
 import { runCliEntryIfMain } from './lib/opencode/cli-entry-runtime.js';
 import { registerNotificationRoutes } from './lib/notifications/routes.js';
@@ -78,6 +79,12 @@ import { createGracefulShutdownRuntime } from './lib/opencode/shutdown-runtime.j
 import { createProjectConfigRuntime } from './lib/projects/project-config.js';
 import { createPreviewProxyRuntime } from './lib/preview/proxy-runtime.js';
 import { createProxyMiddleware, responseInterceptor } from 'http-proxy-middleware';
+import { createFeatureRegistry, createFeatureGate } from './lib/features/index.js';
+import { createBuiltinServerLoader, createServerPluginRegistry, createServerFeatureGate } from './lib/plugins/index.js';
+import { registerFsRoutes } from './lib/fs/routes.js';
+import { registerGitRoutes } from './lib/git/routes.js';
+import { registerGitHubRoutes } from './lib/github/routes.js';
+import { authProviderRuntime } from './lib/plugins/auth-provider.js';
 import webPush from 'web-push';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -820,6 +827,14 @@ const staticRoutesRuntime = createStaticRoutesRuntime({
 const featureRoutesRuntime = createFeatureRoutesRuntime({
   clientReloadDelayMs: CLIENT_RELOAD_DELAY_MS,
 });
+const featureRegistry = createFeatureRegistry();
+const featureGate = createFeatureGate(featureRegistry);
+const serverPluginRegistry = createServerPluginRegistry();
+const serverFeatureGate = createServerFeatureGate(featureRegistry);
+const builtinServerLoader = createBuiltinServerLoader({
+  featureRegistry,
+  serverRegistry: serverPluginRegistry,
+});
 const bootstrapRuntime = createBootstrapRuntime({
   createUiAuth,
   registerServerStatusRoutes,
@@ -829,6 +844,7 @@ const bootstrapRuntime = createBootstrapRuntime({
   registerNotificationRoutes,
   registerOpenChamberRoutes,
   express,
+  authProviderRuntime,
 });
 const tunnelWiringRuntime = createTunnelWiringRuntime({
   crypto,
@@ -1011,6 +1027,7 @@ const gracefulShutdownRuntime = createGracefulShutdownRuntime({
   setTerminalRuntime: (value) => {
     terminalRuntime = value;
   },
+  isTerminalFeatureEnabled: () => terminalFeatureEnabled,
   getMessageStreamRuntime: () => messageStreamRuntime,
   setMessageStreamRuntime: (value) => {
     messageStreamRuntime = value;
@@ -1164,6 +1181,8 @@ async function main(options = {}) {
     fetchFreeZenModels,
     getCachedZenModels,
     setAutoAcceptSession,
+    featureRegistry,
+    serverPluginRegistry,
   });
   uiAuthController = bootstrapResult.uiAuthController;
 
@@ -1203,6 +1222,85 @@ async function main(options = {}) {
     scheduledTasksRuntime,
     getOpenChamberEventClients: () => uiOpenChamberEventClients,
     writeSseEvent,
+  });
+
+  await builtinServerLoader.load(app, {
+    registerFsRoutes,
+    registerGitRoutes,
+    registerGitHubRoutes,
+    os,
+    path,
+    fsPromises,
+    spawn,
+    crypto,
+    normalizeDirectoryPath,
+    resolveProjectDirectory,
+    buildAugmentedPath,
+    resolveGitBinaryForSpawn,
+    openchamberUserConfigRoot: OPENCHAMBER_USER_CONFIG_ROOT,
+  });
+
+  const enabledFeatures = new Set(
+    featureRegistry.getAll().filter((f) => f.enabled).map((f) => f.id),
+  );
+
+  for (const phase of serverPluginRegistry.getRoutePhases()) {
+    const routes = serverPluginRegistry.getRoutesForPhase(phase, { enabledFeatures });
+    for (const entry of routes) {
+      const router = express.Router();
+      if (entry.featureId) {
+        router.use(serverFeatureGate(entry.featureId));
+      }
+      entry.register(router);
+      app.use(router);
+    }
+  }
+
+  const pluginDiagnostics = createPluginDiagnostics({
+    featureRegistry,
+    serverRegistry: serverPluginRegistry,
+  });
+
+  app.get("/api/plugins", (_req, res) => {
+    res.json(pluginDiagnostics.getPluginDiagnostics());
+  });
+
+  app.get("/api/plugins/:pluginId", (req, res) => {
+    const pluginId = req.params.pluginId;
+    const diagnostics = pluginDiagnostics.getPluginDiagnosticsById(pluginId);
+    if (!diagnostics) {
+      return res.status(404).json({ error: "Plugin not found", pluginId });
+    }
+    res.json(diagnostics);
+  });
+
+  const { validatePluginSettings, migratePluginSettings, getAllPluginSettingsSchemas } = await import("./lib/plugins/settings-registry.js");
+
+  app.get("/api/plugins/settings/schemas", (_req, res) => {
+    const schemas = getAllPluginSettingsSchemas().map((s) => ({
+      pluginId: s.pluginId,
+      version: s.version,
+      defaults: s.defaults,
+    }));
+    res.json({ schemas });
+  });
+
+  app.post("/api/plugins/settings/validate", (req, res) => {
+    const { pluginId, values } = req.body;
+    if (!pluginId) {
+      return res.status(400).json({ error: "pluginId is required" });
+    }
+    const result = validatePluginSettings(pluginId, values ?? {});
+    res.json(result);
+  });
+
+  app.post("/api/plugins/settings/migrate", (req, res) => {
+    const { pluginId, fromVersion, toVersion, values } = req.body;
+    if (!pluginId) {
+      return res.status(400).json({ error: "pluginId is required" });
+    }
+    const result = migratePluginSettings(pluginId, fromVersion ?? 1, toVersion ?? 1, values ?? {});
+    res.json(result);
   });
 
   const previewProxyRuntime = createPreviewProxyRuntime({
@@ -1266,9 +1364,11 @@ async function main(options = {}) {
     onTunnelReady,
     tunnelRuntimeContext,
     attachSignals,
+    featureRegistry,
   });
   terminalRuntime = startupPipelineResult.terminalRuntime;
   messageStreamRuntime = startupPipelineResult.messageStreamRuntime;
+  const terminalFeatureEnabled = startupPipelineResult.terminalFeatureEnabled;
 
   try {
     await scheduledTasksRuntime.start();
@@ -1314,4 +1414,6 @@ export {
   restartOpenCode,
   main as startWebUiServer,
   parseServeCliOptions as parseArgs,
+  featureRegistry,
+  featureGate,
 };

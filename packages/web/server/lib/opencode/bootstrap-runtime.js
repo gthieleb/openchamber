@@ -8,6 +8,7 @@ export const createBootstrapRuntime = (dependencies) => {
     registerNotificationRoutes,
     registerOpenChamberRoutes,
     express,
+    authProviderRuntime,
   } = dependencies;
 
   const setupBaseRoutes = (app, options) => {
@@ -49,6 +50,7 @@ export const createBootstrapRuntime = (dependencies) => {
       fetchFreeZenModels,
       getCachedZenModels,
       setAutoAcceptSession,
+      featureRegistry,
     } = options;
 
     registerServerStatusRoutes(app, {
@@ -61,6 +63,20 @@ export const createBootstrapRuntime = (dependencies) => {
       getHealthSnapshot,
     });
 
+    if (featureRegistry) {
+      app.get('/api/features', (_req, res) => {
+        res.json(featureRegistry.getSnapshot());
+      });
+
+      app.get('/api/features/:id', (req, res) => {
+        const feature = featureRegistry.getFeature(req.params.id);
+        if (!feature) {
+          return res.status(404).json({ error: 'Feature not found', featureId: req.params.id });
+        }
+        res.json(feature);
+      });
+    }
+
     registerCommonRequestMiddleware(app, { express, verboseRequestLogs });
 
     const uiAuthController = createUiAuth({
@@ -71,12 +87,23 @@ export const createBootstrapRuntime = (dependencies) => {
       console.log('UI password protection enabled for browser sessions');
     }
 
+    if (authProviderRuntime) {
+      authProviderRuntime.registerBuiltinProviders({
+        hasPassword: uiAuthController.enabled,
+        hasPasskeys: uiAuthController.enabled,
+      });
+    }
+
     registerAuthAndAccessRoutes(app, {
       tunnelAuthController,
       uiAuthController,
       readSettingsFromDiskMigrated,
       normalizeTunnelSessionTtlMs,
     });
+
+    if (authProviderRuntime) {
+      app.get('/api/auth/providers', authProviderRuntime.handleProviderDiscovery);
+    }
 
     registerTtsRoutes(app, { resolveZenModel, sayTTSCapability });
 
@@ -123,6 +150,7 @@ export const createBootstrapRuntime = (dependencies) => {
 
     return {
       uiAuthController,
+      serverPluginRegistry: options.serverPluginRegistry || null,
     };
   };
 

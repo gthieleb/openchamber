@@ -51,24 +51,33 @@ export const createStartupPipelineRuntime = (dependencies) => {
       onTunnelReady,
       tunnelRuntimeContext,
       attachSignals,
+      featureRegistry,
     } = options;
 
-    const terminalRuntime = createTerminalRuntime({
-      app,
-      server,
-      express,
-      fs,
-      path,
-      uiAuthController,
-      buildAugmentedPath,
-      searchPathFor,
-      isExecutable,
-      isRequestOriginAllowed,
-      rejectWebSocketUpgrade,
-      TERMINAL_INPUT_WS_HEARTBEAT_INTERVAL_MS: terminalHeartbeatIntervalMs,
-      TERMINAL_INPUT_WS_REBIND_WINDOW_MS: terminalRebindWindowMs,
-      TERMINAL_INPUT_WS_MAX_REBINDS_PER_WINDOW: terminalMaxRebindsPerWindow,
-    });
+    const terminalFeatureEnabled = featureRegistry
+      ? featureRegistry.isEnabled("openchamber.feature.terminal")
+      : true;
+
+    let terminalRuntime = null;
+
+    if (terminalFeatureEnabled) {
+      terminalRuntime = createTerminalRuntime({
+        app,
+        server,
+        express,
+        fs,
+        path,
+        uiAuthController,
+        buildAugmentedPath,
+        searchPathFor,
+        isExecutable,
+        isRequestOriginAllowed,
+        rejectWebSocketUpgrade,
+        TERMINAL_INPUT_WS_HEARTBEAT_INTERVAL_MS: terminalHeartbeatIntervalMs,
+        TERMINAL_INPUT_WS_REBIND_WINDOW_MS: terminalRebindWindowMs,
+        TERMINAL_INPUT_WS_MAX_REBINDS_PER_WINDOW: terminalMaxRebindsPerWindow,
+      });
+    }
 
     const messageStreamRuntime = createMessageStreamWsRuntime({
       server,
@@ -121,6 +130,7 @@ export const createStartupPipelineRuntime = (dependencies) => {
     return {
       terminalRuntime,
       messageStreamRuntime,
+      terminalFeatureEnabled,
     };
   };
 

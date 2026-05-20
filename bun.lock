@@ -119,6 +119,89 @@
         "electron-builder": "^26.0.0",
       },
     },
+    "packages/plugin": {
+      "name": "@openchamber/plugin",
+      "version": "1.11.1",
+      "dependencies": {
+        "@openchamber/plugin-chat": "workspace:*",
+        "@openchamber/plugin-files": "workspace:*",
+        "@openchamber/plugin-git": "workspace:*",
+        "@openchamber/plugin-github": "workspace:*",
+        "@openchamber/plugin-hello-world": "workspace:*",
+        "@openchamber/plugin-terminal": "workspace:*",
+      },
+      "devDependencies": {
+        "@types/node": "^24.3.1",
+        "typescript": "~5.8.3",
+        "vitest": "^4.1.4",
+      },
+    },
+    "packages/plugins/chat": {
+      "name": "@openchamber/plugin-chat",
+      "version": "1.11.1",
+      "dependencies": {
+        "@openchamber/plugin": "workspace:*",
+      },
+      "devDependencies": {
+        "@types/node": "^24.3.1",
+        "typescript": "~5.8.3",
+      },
+    },
+    "packages/plugins/files": {
+      "name": "@openchamber/plugin-files",
+      "version": "1.11.1",
+      "dependencies": {
+        "@openchamber/plugin": "workspace:*",
+      },
+      "devDependencies": {
+        "@types/node": "^24.3.1",
+        "typescript": "~5.8.3",
+      },
+    },
+    "packages/plugins/git": {
+      "name": "@openchamber/plugin-git",
+      "version": "1.11.1",
+      "dependencies": {
+        "@openchamber/plugin": "workspace:*",
+      },
+      "devDependencies": {
+        "@types/node": "^24.3.1",
+        "typescript": "~5.8.3",
+      },
+    },
+    "packages/plugins/github": {
+      "name": "@openchamber/plugin-github",
+      "version": "1.11.1",
+      "dependencies": {
+        "@openchamber/plugin": "workspace:*",
+      },
+      "devDependencies": {
+        "@types/node": "^24.3.1",
+        "typescript": "~5.8.3",
+      },
+    },
+    "packages/plugins/hello-world": {
+      "name": "@openchamber/plugin-hello-world",
+      "version": "0.1.0",
+      "dependencies": {
+        "@openchamber/plugin": "workspace:*",
+      },
+      "devDependencies": {
+        "@types/node": "^24.3.1",
+        "typescript": "~5.8.3",
+      },
+    },
+    "packages/plugins/terminal": {
+      "name": "@openchamber/plugin-terminal",
+      "version": "1.11.1",
+      "dependencies": {
+        "@openchamber/plugin": "workspace:*",
+      },
+      "devDependencies": {
+        "@types/node": "^24.3.1",
+        "typescript": "~5.8.3",
+      },
+    },
     "packages/ui": {
       "name": "@openchamber/ui",
       "version": "1.11.1",
@@ -152,6 +235,13 @@
         "@fontsource/ibm-plex-sans": "^5.1.1",
         "@ibm/plex": "^6.4.1",
         "@lezer/highlight": "^1.2.3",
+        "@openchamber/plugin": "workspace:*",
+        "@openchamber/plugin-chat": "workspace:*",
+        "@openchamber/plugin-files": "workspace:*",
+        "@openchamber/plugin-git": "workspace:*",
+        "@openchamber/plugin-github": "workspace:*",
+        "@openchamber/plugin-hello-world": "workspace:*",
+        "@openchamber/plugin-terminal": "workspace:*",
         "@opencode-ai/sdk": "^1.4.49",
         "@pierre/diffs": "1.1.0-beta.13",
         "@simplewebauthn/browser": "13.3.0",
@@ -250,6 +340,13 @@
       "dependencies": {
         "@clack/prompts": "^1.1.0",
         "@octokit/rest": "^22.0.1",
+        "@openchamber/plugin": "workspace:*",
+        "@openchamber/plugin-chat": "workspace:*",
+        "@openchamber/plugin-files": "workspace:*",
+        "@openchamber/plugin-git": "workspace:*",
+        "@openchamber/plugin-github": "workspace:*",
+        "@openchamber/plugin-hello-world": "workspace:*",
+        "@openchamber/plugin-terminal": "workspace:*",
         "@opencode-ai/sdk": "^1.4.49",
         "@simplewebauthn/server": "13.3.0",
         "adm-zip": "^0.5.16",
@@ -942,6 +1039,20 @@
     "@openchamber/desktop": ["@openchamber/desktop@workspace:packages/desktop"],
 
     "@openchamber/electron": ["@openchamber/electron@workspace:packages/electron"],
+
+    "@openchamber/plugin": ["@openchamber/plugin@workspace:packages/plugin"],
+
+    "@openchamber/plugin-chat": ["@openchamber/plugin-chat@workspace:packages/plugins/chat"],
+
+    "@openchamber/plugin-files": ["@openchamber/plugin-files@workspace:packages/plugins/files"],
+
+    "@openchamber/plugin-git": ["@openchamber/plugin-git@workspace:packages/plugins/git"],
+
+    "@openchamber/plugin-github": ["@openchamber/plugin-github@workspace:packages/plugins/github"],
+
+    "@openchamber/plugin-hello-world": ["@openchamber/plugin-hello-world@workspace:packages/plugins/hello-world"],
+
+    "@openchamber/plugin-terminal": ["@openchamber/plugin-terminal@workspace:packages/plugins/terminal"],
 
     "@openchamber/ui": ["@openchamber/ui@workspace:packages/ui"],
 

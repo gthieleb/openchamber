@@ -18,10 +18,8 @@ import {
 import { useUIStore } from '@/stores/useUIStore';
 import { useSessionUIStore } from '@/sync/session-ui-store';
 import { useGlobalSessionsStore, resolveGlobalSessionDirectory } from '@/stores/useGlobalSessionsStore';
-import { useDirectoryStore } from '@/stores/useDirectoryStore';
 import { useGitAllBranches, useGitStore } from '@/stores/useGitStore';
 import { useFileSearchStore } from '@/stores/useFileSearchStore';
-import { useDeviceInfo } from '@/lib/device';
 import { useDebouncedValue } from '@/hooks/useDebouncedValue';
 import { useEffectiveDirectory } from '@/hooks/useEffectiveDirectory';
 import { useRuntimeAPIs } from '@/hooks/useRuntimeAPIs';
@@ -29,17 +27,15 @@ import { getContextFileOpenFailureMessage, validateContextFileOpen } from '@/lib
 import { toast } from '@/components/ui';
 import { FileTypeIcon } from '@/components/icons/FileTypeIcon';
 import type { Session } from '@opencode-ai/sdk/v2';
-import { createWorktreeSession } from '@/lib/worktreeSessionCreator';
 import { formatShortcutForDisplay, getEffectiveShortcutCombo } from '@/lib/shortcuts';
-import { canUseElectronDesktopIPC, invokeDesktop, isDesktopShell, isVSCodeRuntime, isWebRuntime } from '@/lib/desktop';
-import { SETTINGS_PAGE_METADATA, type SettingsRuntimeContext } from '@/lib/settings/metadata';
-import { getSettingsNavIcon } from '@/components/views/SettingsView';
+import { isDesktopShell, isVSCodeRuntime, isWebRuntime } from '@/lib/desktop';
+import { type SettingsRuntimeContext } from '@/lib/settings/metadata';
 import { Icon } from "@/components/icon/Icon";
 import { scoreByFuzzyQuery } from '@/lib/search/fuzzySearch';
 import { truncatePathMiddle } from '@/lib/utils';
 import { useI18n } from '@/lib/i18n';
-import { sessionEvents } from '@/lib/sessionEvents';
-import { useProjectsStore } from '@/stores/useProjectsStore';
+import { useCommands } from '@/lib/commandRegistry';
+import { getSettingsPageRegistry } from '@/lib/settingsRegistry';
 
 type CommandEntry = {
   id: string;
@@ -69,28 +65,18 @@ export const CommandPalette: React.FC = () => {
 
   const isCommandPaletteOpen = useUIStore((s) => s.isCommandPaletteOpen);
   const setCommandPaletteOpen = useUIStore((s) => s.setCommandPaletteOpen);
-  const setActiveMainTab = useUIStore((s) => s.setActiveMainTab);
   const setSettingsDialogOpen = useUIStore((s) => s.setSettingsDialogOpen);
   const setSettingsPage = useUIStore((s) => s.setSettingsPage);
-  const setSessionSwitcherOpen = useUIStore((s) => s.setSessionSwitcherOpen);
-  const toggleSidebar = useUIStore((s) => s.toggleSidebar);
-  const toggleRightSidebar = useUIStore((s) => s.toggleRightSidebar);
-  const toggleBottomTerminal = useUIStore((s) => s.toggleBottomTerminal);
-  const openContextOverview = useUIStore((s) => s.openContextOverview);
   const openContextFile = useUIStore((s) => s.openContextFile);
   const shortcutOverrides = useUIStore((s) => s.shortcutOverrides);
 
-  const openNewSessionDraft = useSessionUIStore((s) => s.openNewSessionDraft);
   const setCurrentSession = useSessionUIStore((s) => s.setCurrentSession);
 
   const activeSessions = useGlobalSessionsStore((s) => s.activeSessions);
-  const currentDirectory = useDirectoryStore((s) => s.currentDirectory);
-  const activeProject = useProjectsStore((s) => s.getActiveProject());
   const effectiveDirectory = useEffectiveDirectory();
   const searchFiles = useFileSearchStore((s) => s.searchFiles);
   const { files: filesApi, git: gitApi } = useRuntimeAPIs();
   const ensureGitStatus = useGitStore((s) => s.ensureStatus);
-  const { isMobile } = useDeviceInfo();
 
   const currentRoot = React.useMemo(
     () => (effectiveDirectory ? normalizePath(effectiveDirectory) : null),
@@ -136,131 +122,27 @@ export const CommandPalette: React.FC = () => {
   );
 
   // ---------------------------------------------------------------------------
-  // Commands
+  // Commands (from registry)
   // ---------------------------------------------------------------------------
+  const registryCommands = useCommands();
+
   const commands = React.useMemo<CommandEntry[]>(() => {
-    const list: CommandEntry[] = [
-      {
-        id: 'new-session',
-        title: t('commandPalette.item.newSession'),
-        icon: <Icon name="add" className="mr-2 h-4 w-4" />,
-        shortcutId: 'new_chat',
-        searchText: t('commandPalette.item.newSession'),
-        onSelect: run(() => {
-          setActiveMainTab('chat');
-          setSessionSwitcherOpen(false);
-          openNewSessionDraft();
-        }),
-      },
-      {
-        id: 'new-worktree',
-        title: t('commandPalette.item.newWorktreeDraft'),
-        icon: <Icon name="git-branch" className="mr-2 h-4 w-4" />,
-        shortcutId: 'new_chat_worktree',
-        searchText: t('commandPalette.item.newWorktreeDraft'),
-        onSelect: run(() => {
-          void createWorktreeSession();
-        }),
-      },
-      {
-        id: 'add-project',
-        title: t('commandPalette.item.addProject'),
-        icon: <Icon name="folder-add" className="mr-2 h-4 w-4" />,
-        searchText: t('commandPalette.item.addProject'),
-        onSelect: run(() => {
-          sessionEvents.requestDirectoryDialog();
-        }),
-      },
-      {
-        id: 'toggle-sidebar',
-        title: isMobile
-          ? t('commandPalette.item.showSessionSwitcher')
-          : t('commandPalette.item.toggleSidebar'),
-        icon: <Icon name="layout-left" className="mr-2 h-4 w-4" />,
-        shortcutId: 'toggle_sidebar',
-        searchText: isMobile
-          ? t('commandPalette.item.showSessionSwitcher')
-          : t('commandPalette.item.toggleSidebar'),
-        onSelect: run(() => {
-          if (isMobile) {
-            const { isSessionSwitcherOpen } = useUIStore.getState();
-            setSessionSwitcherOpen(!isSessionSwitcherOpen);
-          } else {
-            toggleSidebar();
-          }
-        }),
-      },
-      {
-        id: 'toggle-right-sidebar',
-        title: t('commandPalette.item.toggleRightSidebar'),
-        icon: <Icon name="layout-right" className="mr-2 h-4 w-4" />,
-        shortcutId: 'toggle_right_sidebar',
-        searchText: t('commandPalette.item.toggleRightSidebar'),
-        onSelect: run(() => toggleRightSidebar()),
-      },
-      {
-        id: 'toggle-terminal',
-        title: t('commandPalette.item.toggleTerminal'),
-        icon: <Icon name="terminal-box" className="mr-2 h-4 w-4" />,
-        shortcutId: 'toggle_terminal',
-        searchText: t('commandPalette.item.toggleTerminal'),
-        onSelect: run(() => toggleBottomTerminal()),
-      },
-      {
-        id: 'context-usage',
-        title: t('commandPalette.item.showContextUsage'),
-        icon: <Icon name="pie-chart" className="mr-2 h-4 w-4" />,
-        searchText: t('commandPalette.item.showContextUsage'),
-        onSelect: run(() => {
-          if (currentDirectory) openContextOverview(currentDirectory);
-        }),
-      },
-      {
-        id: 'open-settings',
-        title: t('commandPalette.item.openSettings'),
-        icon: <Icon name="settings-3" className="mr-2 h-4 w-4" />,
-        shortcutId: 'open_settings',
-        searchText: t('commandPalette.item.openSettings'),
-        onSelect: run(() => setSettingsDialogOpen(true)),
-      },
-    ];
-    if (canUseElectronDesktopIPC()) {
-      list.splice(1, 0, {
-        id: 'new-mini-chat',
-        title: t('commandPalette.item.newMiniChat'),
-        icon: <Icon name="window" className="mr-2 h-4 w-4" />,
-        shortcutId: 'new_mini_chat',
-        searchText: t('commandPalette.item.newMiniChat'),
-        onSelect: run(() => {
-          void invokeDesktop('desktop_open_draft_mini_chat_window', {
-            directory: normalizePath(currentDirectory || activeProject?.path || ''),
-            projectId: activeProject?.id ?? null,
-          }).catch((error) => {
-            console.warn('[command-palette] failed to open draft mini chat window', error);
-          });
-        }),
-      });
-    }
-    return list;
-  }, [
-    t,
-    run,
-    isMobile,
-    setActiveMainTab,
-    setSessionSwitcherOpen,
-    openNewSessionDraft,
-    toggleSidebar,
-    toggleRightSidebar,
-    toggleBottomTerminal,
-    currentDirectory,
-    openContextOverview,
-    setSettingsDialogOpen,
-    activeProject?.id,
-    activeProject?.path,
-  ]);
+    return registryCommands.map((cmd) => {
+      const icon = cmd.icon ? React.createElement(cmd.icon as React.ComponentType<{ className?: string }>, { className: 'mr-2 h-4 w-4' }) : null;
+      const keywords = (cmd.keywords ?? []).join(' ');
+      return {
+        id: cmd.id,
+        title: cmd.title,
+        icon,
+        shortcutId: cmd.shortcutId,
+        searchText: `${cmd.title} ${keywords}`,
+        onSelect: run(() => cmd.run()),
+      };
+    });
+  }, [registryCommands, run]);
 
   // ---------------------------------------------------------------------------
-  // Settings sub-pages (only show when there's a query)
+  // Settings sub-pages (from registry, only show when there's a query)
   // ---------------------------------------------------------------------------
   const settingsRuntimeCtx = React.useMemo<SettingsRuntimeContext>(() => {
     const isDesktop = isDesktopShell();
@@ -268,11 +150,11 @@ export const CommandPalette: React.FC = () => {
   }, []);
 
   const settingsEntries = React.useMemo<CommandEntry[]>(() => {
-    return SETTINGS_PAGE_METADATA
+    const reg = getSettingsPageRegistry();
+    return reg.getAllPages({ runtimeContext: settingsRuntimeCtx })
       .filter((p) => p.slug !== 'home')
-      .filter((p) => (p.isAvailable ? p.isAvailable(settingsRuntimeCtx) : true))
       .map((page) => {
-        const iconName = getSettingsNavIcon(page.slug) ?? 'settings-3';
+        const iconName = page.icon ? 'settings-3' : 'settings-3';
         const keywords = (page.keywords ?? []).join(' ');
         return {
           id: `settings:${page.slug}`,
@@ -283,7 +165,7 @@ export const CommandPalette: React.FC = () => {
             setSettingsPage(page.slug);
             setSettingsDialogOpen(true);
           }),
-        } satisfies CommandEntry;
+        };
       });
   }, [settingsRuntimeCtx, run, setSettingsPage, setSettingsDialogOpen]);
 
