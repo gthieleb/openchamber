@@ -242,7 +242,7 @@ export const debugUtils = {
 
     const safeFetchJson = async (url: string): Promise<unknown> => {
       try {
-        const resp = await fetch(url);
+        const resp = await runtimeFetch(url);
         return resp.ok ? await safeJson(resp) : { status: resp.status };
       } catch (error) {
         return { error: error instanceof Error ? error.message : String(error) };

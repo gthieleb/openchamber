@@ -1,4 +1,5 @@
 import { getRuntimeUrlResolver } from './runtime-url';
+import { subscribeRuntimeEndpointChanged } from './runtime-switch';
 
 export type ScheduledTaskRanEvent = {
   type: 'scheduled-task-ran';
@@ -16,6 +17,7 @@ let eventSource: EventSource | null = null;
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 let heartbeatTimer: ReturnType<typeof setTimeout> | null = null;
 let reconnectAttempt = 0;
+let runtimeChangeUnsubscribe: (() => void) | null = null;
 const listeners = new Set<Listener>();
 
 const MAX_RECONNECT_DELAY_MS = 30_000;
@@ -152,8 +154,23 @@ const connect = () => {
   eventSource = source;
 };
 
+const ensureRuntimeChangeSubscription = () => {
+  if (runtimeChangeUnsubscribe || typeof window === 'undefined') return;
+  runtimeChangeUnsubscribe = subscribeRuntimeEndpointChanged(() => {
+    cleanupSource();
+    reconnectAttempt = 0;
+    connect();
+  });
+};
+
+const cleanupRuntimeChangeSubscription = () => {
+  runtimeChangeUnsubscribe?.();
+  runtimeChangeUnsubscribe = null;
+};
+
 export const subscribeOpenchamberEvents = (listener: Listener): (() => void) => {
   listeners.add(listener);
+  ensureRuntimeChangeSubscription();
   connect();
 
   return () => {
@@ -165,6 +182,7 @@ export const subscribeOpenchamberEvents = (listener: Listener): (() => void) => 
       }
       reconnectAttempt = 0;
       cleanupSource();
+      cleanupRuntimeChangeSubscription();
     }
   };
 };

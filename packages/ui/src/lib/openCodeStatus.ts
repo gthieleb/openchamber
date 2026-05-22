@@ -3,6 +3,7 @@ import { getSyncSessions } from '@/sync/sync-refs';
 import { useUIStore } from '@/stores/useUIStore';
 import { getRuntimeUrlResolver } from './runtime-url';
 import { opencodeClient } from './opencode/client';
+import { runtimeFetch } from './runtime-fetch';
 
 declare const __APP_VERSION__: string | undefined;
 
@@ -59,7 +60,7 @@ const safeFetch = async (input: string, timeoutMs = 6000): Promise<ProbeResult> 
   const startedAt = Date.now();
 
   try {
-    const resp = await fetch(input, {
+    const resp = await runtimeFetch(input, {
       method: 'GET',
       headers: { Accept: 'application/json' },
       signal: controller.signal,
@@ -163,7 +164,7 @@ export const buildOpenCodeStatusReport = async (): Promise<string> => {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 5000);
     try {
-      const resp = await fetch(healthUrl, {
+      const resp = await runtimeFetch(healthUrl, {
         method: 'GET',
         headers: { Accept: 'application/json' },
         signal: controller.signal,
@@ -188,7 +189,7 @@ export const buildOpenCodeStatusReport = async (): Promise<string> => {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 7000);
     try {
-      const resp = await fetch(urls.api('/api/config/opencode-resolution'), {
+      const resp = await runtimeFetch(urls.api('/api/config/opencode-resolution'), {
         method: 'GET',
         headers: { Accept: 'application/json' },
         signal: controller.signal,

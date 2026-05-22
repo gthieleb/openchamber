@@ -2,6 +2,7 @@ import { create } from "zustand";
 import { devtools, persist, createJSONStorage } from "zustand/middleware";
 import type { AttachedFile } from "./types/sessionTypes";
 import { getSafeStorage } from "./utils/safeStorage";
+import { runtimeFetch } from "@/lib/runtime-fetch";
 import { getRuntimeUrlResolver } from "@/lib/runtime-url";
 
 interface FileState {
@@ -104,7 +105,7 @@ const toFileUrl = (inputPath: string): string => {
 };
 
 const readRawFileAsDataUrl = async (absolutePath: string): Promise<string> => {
-    const response = await fetch(getRuntimeUrlResolver().rawFile(absolutePath));
+    const response = await runtimeFetch(getRuntimeUrlResolver().rawFile(absolutePath));
     if (!response.ok) {
         throw new Error(`Failed to read raw file: ${response.status}`);
     }

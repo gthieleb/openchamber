@@ -515,7 +515,7 @@ class OpencodeService {
         url.searchParams.set("directory", this.currentDirectory);
       }
 
-      const response = await fetch(url.toString(), {
+      const response = await runtimeSdkFetch(url.toString(), {
         method: "GET",
         headers: {
           Accept: "application/json",
@@ -817,7 +817,7 @@ class OpencodeService {
 
     for (let attempt = 0; attempt < 3; attempt++) {
       try {
-        response = await fetch(url.toString(), {
+        response = await runtimeSdkFetch(url.toString(), {
           method: 'POST',
           headers: {
             'content-type': 'application/json',
@@ -915,7 +915,7 @@ class OpencodeService {
       messageID: tempMessageId,
     };
 
-    const response = await fetch(url.toString(), {
+    const response = await runtimeSdkFetch(url.toString(), {
       method: 'POST',
       headers: {
         'content-type': 'application/json',
@@ -1009,7 +1009,7 @@ class OpencodeService {
         url.searchParams.set("directory", trimmedDirectory);
       }
 
-      const response = await fetch(url.toString(), {
+      const response = await runtimeSdkFetch(url.toString(), {
         method: "GET",
         headers: {
           Accept: "application/json",
@@ -1242,7 +1242,7 @@ class OpencodeService {
     // The config should be global, not directory-specific
     const url = `${this.baseUrl}/config`;
 
-    const response = await fetch(url, {
+    const response = await runtimeSdkFetch(url, {
       method: 'PATCH',
       headers: {
         'Content-Type': 'application/json',
@@ -1331,7 +1331,7 @@ class OpencodeService {
     try {
       // For now, we'll use a placeholder implementation
       // In a real implementation, this would call an API endpoint to read the file
-      const response = await fetch(`${this.baseUrl}/files/read`, {
+      const response = await runtimeSdkFetch(`${this.baseUrl}/files/read`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -1357,7 +1357,7 @@ class OpencodeService {
   async listFiles(directory?: string): Promise<Record<string, unknown>[]> {
     try {
       const targetDir = directory || this.currentDirectory || '/';
-      const response = await fetch(`${this.baseUrl}/files/list`, {
+      const response = await runtimeSdkFetch(`${this.baseUrl}/files/list`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -1482,7 +1482,7 @@ class OpencodeService {
       } else {
         healthUrl = `${normalizedBase}/health`;
       }
-      const response = await fetch(healthUrl);
+      const response = await runtimeSdkFetch(healthUrl);
       if (!response.ok) {
         return false;
       }
@@ -1520,7 +1520,7 @@ class OpencodeService {
       ...(options?.allowOutsideWorkspace ? { allowOutsideWorkspace: true } : {}),
     };
 
-    const response = await fetch(`${this.baseUrl}/fs/mkdir`, {
+    const response = await runtimeSdkFetch(`${this.baseUrl}/fs/mkdir`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -1538,7 +1538,7 @@ class OpencodeService {
   }
 
   async cloneRepository(input: { remoteUrl: string; destinationPath: string; gitIdentityId?: string | null }): Promise<{ success: boolean; path: string; output?: string }> {
-    const response = await fetch(`${this.baseUrl}/fs/clone`, {
+    const response = await runtimeSdkFetch(`${this.baseUrl}/fs/clone`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -1604,7 +1604,7 @@ class OpencodeService {
         params.set('respectGitignore', 'true');
       }
       const query = params.toString();
-      const response = await fetch(`${this.baseUrl}/fs/list${query ? `?${query}` : ''}`);
+      const response = await runtimeSdkFetch(`${this.baseUrl}/fs/list${query ? `?${query}` : ''}`);
       if (!response.ok) {
         const error = await response.json().catch(() => ({}));
         const message = typeof error.error === 'string' ? error.error : 'Failed to list directory';
@@ -1692,7 +1692,7 @@ class OpencodeService {
     }
 
     try {
-      const response = await fetch(`${this.baseUrl}/fs/home`, {
+      const response = await runtimeSdkFetch(`${this.baseUrl}/fs/home`, {
         method: 'GET',
         headers: {
           Accept: 'application/json'
@@ -1729,7 +1729,7 @@ class OpencodeService {
     console.log('[OpencodeClient] POST', url, 'with path:', directoryPath);
 
     try {
-      const response = await fetch(url, {
+      const response = await runtimeSdkFetch(url, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'

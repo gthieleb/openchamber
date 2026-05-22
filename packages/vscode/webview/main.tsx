@@ -334,6 +334,14 @@ const decodeBase64 = (value: string): Uint8Array => {
   return bytes;
 };
 
+const jsonResponse = (body: unknown, status = 200): Response => {
+  return new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
+};
+
+const unsupportedWebRouteResponse = (feature: string): Response => {
+  return jsonResponse({ error: `${feature} is not supported in VS Code` }, 501);
+};
+
 const isNullBodyStatus = (status: number): boolean => status === 204 || status === 205 || status === 304;
 
 const buildProxiedResponse = (
@@ -425,6 +433,28 @@ const handleLocalApiRequest = async (url: URL, init?: RequestInit) => {
   const pathname = url.pathname;
   const normalizedPathname = pathname !== '/' ? pathname.replace(/\/+$/, '') : pathname;
   const method = ((init?.method || 'GET') as string).toUpperCase();
+
+  if (normalizedPathname === '/api/system/info' && method === 'GET') {
+    const config = window.__VSCODE_CONFIG__;
+    return jsonResponse({
+      openchamberVersion: config?.extensionVersion || 'VS Code Extension',
+      runtime: 'vscode',
+      platform: config?.platform || '',
+      arch: config?.arch || '',
+    });
+  }
+
+  if (normalizedPathname === '/api/preview/targets') {
+    return unsupportedWebRouteResponse('Preview proxy');
+  }
+
+  if (normalizedPathname.startsWith('/api/openchamber/tunnel/')) {
+    return unsupportedWebRouteResponse('Remote tunnel settings');
+  }
+
+  if (/^\/api\/projects\/[^/]+\/scheduled-tasks(?:\/[^/]+)?$/.test(normalizedPathname)) {
+    return unsupportedWebRouteResponse('Scheduled tasks');
+  }
 
   if (normalizedPathname === '/api/sessions/snapshot' && method === 'GET') {
     const activity = await sendBridgeMessage<Record<string, { type: 'idle' | 'busy' | 'cooldown' }>>('api:session-activity:get')

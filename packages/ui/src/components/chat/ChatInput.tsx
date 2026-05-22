@@ -35,6 +35,7 @@ import { toast } from '@/components/ui';
 import { Button } from '@/components/ui/button';
 // useMessageStore removed — messages now come from sync system
 import { isTauriShell, isVSCodeRuntime } from '@/lib/desktop';
+import { runtimeFetch } from '@/lib/runtime-fetch';
 import { getRuntimeUrlResolver } from '@/lib/runtime-url';
 import { isIMECompositionEvent } from '@/lib/ime';
 import { StopIcon } from '@/components/icons/StopIcon';
@@ -3137,7 +3138,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({ onOpenSettings, scrollTo
                                     const blob = new Blob([byteArray], { type: result.mime || 'application/octet-stream' });
                                     file = new File([blob], fileName, { type: result.mime || 'application/octet-stream' });
                                 } else {
-                                    const response = await fetch(getRuntimeUrlResolver().rawFile(normalizedPath));
+                                    const response = await runtimeFetch(getRuntimeUrlResolver().rawFile(normalizedPath));
                                     if (!response.ok) {
                                         throw new Error(`Failed to read dropped file (${response.status})`);
                                     }

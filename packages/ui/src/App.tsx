@@ -32,6 +32,7 @@ import { useSessionUIStore } from '@/sync/session-ui-store';
 import { useDirectoryStore } from '@/stores/useDirectoryStore';
 import { useProjectsStore } from '@/stores/useProjectsStore';
 import { opencodeClient } from '@/lib/opencode/client';
+import { disposeTerminalInputTransport } from '@/lib/terminalApi';
 import { getRuntimeUrlResolver } from '@/lib/runtime-url';
 import { subscribeRuntimeEndpointChanged } from '@/lib/runtime-switch';
 import { SyncProvider } from '@/sync/sync-context';
@@ -257,6 +258,7 @@ function App({ apis }: AppProps) {
     return subscribeRuntimeEndpointChanged((detail) => {
       useSessionUIStore.getState().prepareForRuntimeSwitch(detail.previousRuntimeKey);
       useUIStore.getState().prepareForRuntimeSwitch(detail.previousRuntimeKey);
+      disposeTerminalInputTransport();
       opencodeClient.reconnectToRuntimeBaseUrl();
       useConfigStore.setState({
         providers: [],

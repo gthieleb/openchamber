@@ -31,6 +31,38 @@ let _optimisticRemove: ((input: { sessionID: string; messageID: string }) => voi
 
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 
+type SdkResult<T> = {
+  data?: T
+  error?: unknown
+  response?: { status?: number }
+}
+
+function formatSdkError(error: unknown): string {
+  if (error instanceof Error) return error.message
+  if (typeof error === "string") return error
+  if (error && typeof error === "object") {
+    const message = (error as { message?: unknown }).message
+    if (typeof message === "string" && message.length > 0) return message
+
+    const data = (error as { data?: unknown }).data
+    if (data && typeof data === "object") {
+      const dataMessage = (data as { message?: unknown }).message
+      if (typeof dataMessage === "string" && dataMessage.length > 0) return dataMessage
+    }
+  }
+  try {
+    return JSON.stringify(error)
+  } catch {
+    return String(error)
+  }
+}
+
+function assertSdkSuccess<T>(result: SdkResult<T>, operation: string): T | undefined {
+  if (!result.error) return result.data
+  const status = result.response?.status
+  throw new Error(`${operation} failed${status ? ` (${status})` : ""}: ${formatSdkError(result.error)}`)
+}
+
 export function setActionRefs(
   sdk: OpencodeClient,
   childStores: ChildStoreManager,
@@ -96,15 +128,47 @@ export async function waitForConnectionOrThrow(): Promise<void> {
   throw connectionLostError()
 }
 
-function getSessionDirectory(sessionId: string): string | undefined {
-  return useSessionUIStore.getState().getDirectoryForSession(sessionId) || dir()
+type SessionListSnapshot = {
+  directory: string
+  sessions: Session[]
 }
 
-function getDirectoryStore(directory?: string) {
-  if (!_childStores) throw new Error("Child stores not initialized")
-  const resolvedDirectory = directory || _getDirectory()
-  if (!resolvedDirectory) throw new Error("No current directory")
-  return _childStores.ensureChild(resolvedDirectory)
+type DirectoryStoreApi = ReturnType<ChildStoreManager["ensureChild"]>
+
+function getGlobalSessionSnapshot(sessionId: string): Session | null {
+  const global = useGlobalSessionsStore.getState()
+  return [...global.activeSessions, ...global.archivedSessions].find((session) => session.id === sessionId) ?? null
+}
+
+function restoreGlobalSessionSnapshot(session: Session | null): void {
+  if (!session) return
+  useGlobalSessionsStore.getState().upsertSession(session)
+}
+
+function getSessionDirectory(sessionId: string): string | undefined {
+  return findSessionDirectoryInChildStores(sessionId)
+    || useSessionUIStore.getState().getDirectoryForSession(sessionId)
+    || dir()
+}
+
+function findSessionDirectoryInChildStores(sessionId: string): string | null {
+  const stores = _childStores
+  if (!stores || !sessionId) return null
+
+  for (const [directory, store] of stores.children) {
+    const state = store.getState()
+    if (
+      state.session.some((session) => session.id === sessionId)
+      || Object.prototype.hasOwnProperty.call(state.message, sessionId)
+      || Object.prototype.hasOwnProperty.call(state.session_status ?? {}, sessionId)
+      || Object.prototype.hasOwnProperty.call(state.permission ?? {}, sessionId)
+      || Object.prototype.hasOwnProperty.call(state.question ?? {}, sessionId)
+    ) {
+      return directory
+    }
+  }
+
+  return null
 }
 
 function getSessionReplyClient(sessionId?: string): OpencodeClient {
@@ -216,62 +280,71 @@ export async function createSession(
   }
 }
 
-/** Optimistically remove a session from the child store list. Returns previous list for rollback. */
-function optimisticRemoveSession(sessionId: string, directory?: string): Session[] | null {
-  const store = getDirectoryStore(directory)
-  const current = store.getState()
-  const sessions = [...current.session]
-  const result = Binary.search(sessions, sessionId, (s) => s.id)
-  if (result.found) {
-    const snapshot = current.session
-    sessions.splice(result.index, 1)
-    store.setState({ session: sessions })
-    return snapshot
+/** Optimistically remove a session from every live child store that has it. */
+function optimisticRemoveSession(sessionId: string, preferredDirectory?: string): SessionListSnapshot[] {
+  if (!_childStores) return []
+
+  const snapshots: SessionListSnapshot[] = []
+  const visited = new Set<string>()
+  const candidates: Array<[string, DirectoryStoreApi]> = []
+
+  if (preferredDirectory) {
+    const preferredStore = _childStores.children.get(preferredDirectory)
+    if (preferredStore) {
+      candidates.push([preferredDirectory, preferredStore])
+      visited.add(preferredDirectory)
+    }
   }
-  return null
+
+  for (const entry of _childStores.children.entries()) {
+    if (visited.has(entry[0])) continue
+    candidates.push(entry)
+  }
+
+  for (const [directory, store] of candidates) {
+    const current = store.getState()
+    if (!current.session.some((session) => session.id === sessionId)) {
+      continue
+    }
+    snapshots.push({ directory, sessions: current.session })
+    store.setState({ session: current.session.filter((session) => session.id !== sessionId) })
+  }
+
+  return snapshots
+}
+
+function restoreSessionListSnapshots(snapshots: SessionListSnapshot[]): void {
+  if (!_childStores) return
+  for (const snapshot of snapshots) {
+    const store = _childStores.children.get(snapshot.directory)
+    if (!store) continue
+    store.setState({ session: snapshot.sessions })
+  }
 }
 
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 export async function deleteSession(sessionId: string, _options?: Record<string, unknown>): Promise<boolean> {
   const sessionDirectory = getSessionDirectory(sessionId)
-  // Remove from UI immediately, rollback on error
-  let snapshot = optimisticRemoveSession(sessionId, sessionDirectory)
-  let removedFromDir: string | null = snapshot ? (sessionDirectory ?? null) : null
-
-  // If the session wasn't in the resolved directory (e.g. archived session
-  // whose original child store was disposed), search all child stores.
-  if (!snapshot && _childStores) {
-    for (const [dir, store] of _childStores.children.entries()) {
-      const current = store.getState()
-      const sessions = [...current.session]
-      const result = Binary.search(sessions, sessionId, (s) => s.id)
-      if (result.found) {
-        snapshot = current.session
-        sessions.splice(result.index, 1)
-        store.setState({ session: sessions })
-        removedFromDir = dir
-        break
-      }
-    }
-  }
+  const snapshots = optimisticRemoveSession(sessionId, sessionDirectory)
+  const globalSnapshot = getGlobalSessionSnapshot(sessionId)
+  useGlobalSessionsStore.getState().removeSessions([sessionId])
 
   const ui = useSessionUIStore.getState()
   if (ui.currentSessionId === sessionId) {
     ui.setCurrentSession(null)
   }
   try {
-    await sdk().session.delete({ sessionID: sessionId, directory: sessionDirectory })
+    const result = await sdk().session.delete({ sessionID: sessionId, directory: sessionDirectory })
+    const deleted = assertSdkSuccess(result, "session.delete")
+    if (deleted !== true) {
+      throw new Error("session.delete failed: server did not confirm deletion")
+    }
     useGlobalSessionsStore.getState().removeSessions([sessionId])
     return true
   } catch (error) {
     console.error("[session-actions] deleteSession failed", error)
-    if (snapshot && removedFromDir) {
-      try {
-        getDirectoryStore(removedFromDir).setState({ session: snapshot })
-      } catch {
-        // child store may have been disposed since — ignore rollback
-      }
-    }
+    restoreSessionListSnapshots(snapshots)
+    restoreGlobalSessionSnapshot(globalSnapshot)
     return false
   }
 }
@@ -279,44 +352,49 @@ export async function deleteSession(sessionId: string, _options?: Record<string,
 /** Delete a session specifying which directory it lives in. Used by agent groups for cross-directory deletes. */
 export async function deleteSessionInDirectory(sessionId: string, directory: string): Promise<boolean> {
   if (!_childStores) return false
-  const store = _childStores.ensureChild(directory)
-  const current = store.getState()
-  const sessions = [...current.session]
-  const result = Binary.search(sessions, sessionId, (s) => s.id)
-  let snapshot: Session[] | null = null
-  if (result.found) {
-    snapshot = current.session
-    sessions.splice(result.index, 1)
-    store.setState({ session: sessions })
-  }
+  const snapshots = optimisticRemoveSession(sessionId, directory)
+  const globalSnapshot = getGlobalSessionSnapshot(sessionId)
+  useGlobalSessionsStore.getState().removeSessions([sessionId])
   const ui = useSessionUIStore.getState()
   if (ui.currentSessionId === sessionId) ui.setCurrentSession(null)
   try {
-    await sdk().session.delete({ sessionID: sessionId, directory })
+    const result = await sdk().session.delete({ sessionID: sessionId, directory })
+    const deleted = assertSdkSuccess(result, "session.delete")
+    if (deleted !== true) {
+      throw new Error("session.delete failed: server did not confirm deletion")
+    }
     useGlobalSessionsStore.getState().removeSessions([sessionId])
     return true
   } catch (error) {
     console.error("[session-actions] deleteSessionInDirectory failed", error)
-    if (snapshot) store.setState({ session: snapshot })
+    restoreSessionListSnapshots(snapshots)
+    restoreGlobalSessionSnapshot(globalSnapshot)
     return false
   }
 }
 
 export async function archiveSession(sessionId: string): Promise<boolean> {
   const sessionDirectory = getSessionDirectory(sessionId)
-  const snapshot = optimisticRemoveSession(sessionId, sessionDirectory)
+  const snapshots = optimisticRemoveSession(sessionId, sessionDirectory)
+  const globalSnapshot = getGlobalSessionSnapshot(sessionId)
+  const archivedAt = Date.now()
+  useGlobalSessionsStore.getState().archiveSessions([sessionId], archivedAt)
   const ui = useSessionUIStore.getState()
   if (ui.currentSessionId === sessionId) {
     ui.setCurrentSession(null)
   }
   try {
-    const archivedAt = Date.now()
-    await sdk().session.update({ sessionID: sessionId, directory: sessionDirectory, time: { archived: archivedAt } })
-    useGlobalSessionsStore.getState().archiveSessions([sessionId], archivedAt)
+    const result = await sdk().session.update({ sessionID: sessionId, directory: sessionDirectory, time: { archived: archivedAt } })
+    const archived = assertSdkSuccess(result, "session.update")
+    if (!archived) {
+      throw new Error("session.update failed: server did not return the archived session")
+    }
+    useGlobalSessionsStore.getState().upsertSession(archived)
     return true
   } catch (error) {
     console.error("[session-actions] archiveSession failed", error)
-    if (snapshot) getDirectoryStore(sessionDirectory).setState({ session: snapshot })
+    restoreSessionListSnapshots(snapshots)
+    restoreGlobalSessionSnapshot(globalSnapshot)
     return false
   }
 }
