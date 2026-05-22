@@ -24,6 +24,7 @@ import {
   locationMatchesHost,
   normalizeHostUrl,
   redactSensitiveUrl,
+  resolveDesktopHostUrl,
   type DesktopHost,
   type HostProbeResult,
 } from '@/lib/desktopHosts';
@@ -628,16 +629,20 @@ export function DesktopHostSwitcherDialog({
       return;
     }
 
-    const url = normalizeHostUrl(editUrl);
-    if (!url) {
+    const resolved = resolveDesktopHostUrl(editUrl);
+    if (!resolved) {
       setError(t('desktopHostSwitcher.error.invalidUrl'));
       return;
     }
+    const url = resolved.persistedUrl;
 
     const label = (editLabel || redactSensitiveUrl(url)).trim();
     const nextHosts = configHosts.map((h) => (h.id === editingId ? { ...h, label, url } : h));
     await persist(nextHosts, defaultHostId);
     cancelEdit();
+    if (resolved.redeemUrl) {
+      window.location.assign(resolved.redeemUrl);
+    }
   }, [cancelEdit, configHosts, defaultHostId, editLabel, editUrl, editingId, persist, t]);
 
   const setDefault = React.useCallback(async (id: string) => {

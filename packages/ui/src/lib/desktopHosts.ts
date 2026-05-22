@@ -38,7 +38,13 @@ export type HostProbeResult = {
   latencyMs: number;
 };
 
-const SENSITIVE_QUERY_KEY = /token|auth|secret|api/i;
+export type DesktopHostUrlResolution = {
+  persistedUrl: string;
+  redeemUrl: string | null;
+  kind: 'normal-host' | 'tunnel-connect-link';
+};
+
+const SENSITIVE_QUERY_KEY = /^(t|.*(?:token|auth|secret|api).*)$/i;
 
 export const normalizeHostUrl = (raw: string): string | null => {
   const trimmed = raw.trim();
@@ -52,6 +58,31 @@ export const normalizeHostUrl = (raw: string): string | null => {
   } catch {
     return null;
   }
+};
+
+export const resolveDesktopHostUrl = (raw: string): DesktopHostUrlResolution | null => {
+  const normalized = normalizeHostUrl(raw);
+  if (!normalized) return null;
+
+  try {
+    const url = new URL(normalized);
+    const pathname = url.pathname.replace(/\/+$/, '') || '/';
+    if (pathname === '/connect' && url.searchParams.has('t')) {
+      return {
+        persistedUrl: url.origin,
+        redeemUrl: url.toString(),
+        kind: 'tunnel-connect-link',
+      };
+    }
+  } catch {
+    return null;
+  }
+
+  return {
+    persistedUrl: normalized,
+    redeemUrl: null,
+    kind: 'normal-host',
+  };
 };
 
 export const redactSensitiveUrl = (raw: string): string => {

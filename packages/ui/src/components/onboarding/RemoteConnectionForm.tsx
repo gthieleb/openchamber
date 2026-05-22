@@ -3,7 +3,7 @@ import {
   desktopHostsGet,
   desktopHostsSet,
   desktopHostProbe,
-  normalizeHostUrl,
+  resolveDesktopHostUrl,
   type HostProbeResult,
 } from '@/lib/desktopHosts';
 import { Button } from '@/components/ui/button';
@@ -70,7 +70,8 @@ export function RemoteConnectionForm({
   const [probeResult, setProbeResult] = useState<HostProbeResult | null>(null);
   const [error, setError] = useState('');
 
-  const normalizedUrl = normalizeHostUrl(url);
+  const resolvedUrl = resolveDesktopHostUrl(url);
+  const normalizedUrl = resolvedUrl?.persistedUrl ?? null;
 
   const handleUrlChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     setUrl(e.target.value);
@@ -101,14 +102,15 @@ export function RemoteConnectionForm({
   }, [normalizedUrl, t]);
 
   const handleConnect = useCallback(async () => {
-    if (!normalizedUrl) return;
+    if (!resolvedUrl) return;
+    const targetUrl = resolvedUrl.persistedUrl;
 
     setState('testing');
     setProbeResult(null);
     setError('');
 
     try {
-      const probe = await desktopHostProbe(normalizedUrl);
+      const probe = await desktopHostProbe(targetUrl);
       setProbeResult(probe);
 
       // Block connection on wrong-service or unreachable
@@ -118,10 +120,10 @@ export function RemoteConnectionForm({
       }
 
       const config = await desktopHostsGet();
-      const hostLabel = label.trim() || normalizedUrl;
+      const hostLabel = label.trim() || targetUrl;
 
       const existingHost = config.hosts.find(
-        (h) => h.url === normalizedUrl
+        (h) => h.url === targetUrl
       );
 
       const hostId = existingHost ? existingHost.id : `host-${Date.now().toString(16)}`;
@@ -129,8 +131,8 @@ export function RemoteConnectionForm({
       const newHost = {
         id: hostId,
         label: hostLabel,
-        url: normalizedUrl,
-        apiUrl: normalizedUrl,
+        url: targetUrl,
+        apiUrl: targetUrl,
       };
 
       const updatedHosts = existingHost
@@ -146,6 +148,11 @@ export function RemoteConnectionForm({
 
       onConnect?.();
 
+      if (resolvedUrl.redeemUrl) {
+        window.location.assign(resolvedUrl.redeemUrl);
+        return;
+      }
+
       if (isTauriShell()) {
         const tauri = (window as unknown as { __TAURI__?: { core?: { invoke?: (cmd: string, args?: Record<string, unknown>) => Promise<unknown> } } }).__TAURI__;
         await tauri?.core?.invoke?.('desktop_restart');
@@ -154,7 +161,7 @@ export function RemoteConnectionForm({
       setError(err instanceof Error ? err.message : t('onboarding.remoteConnection.errors.failedToSaveConnection'));
       setState('error');
     }
-  }, [normalizedUrl, label, onConnect, t]);
+  }, [resolvedUrl, label, onConnect, t]);
 
   const isTesting = state === 'testing';
   const canTest = normalizedUrl !== null && !isTesting;

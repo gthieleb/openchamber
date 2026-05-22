@@ -43,6 +43,7 @@ import {
   desktopHostsSet,
   normalizeHostUrl,
   redactSensitiveUrl,
+  resolveDesktopHostUrl,
   type DesktopHost,
 } from '@/lib/desktopHosts';
 import { isDesktopShell } from '@/lib/desktop';
@@ -358,11 +359,12 @@ export const RemoteInstancesPage: React.FC = () => {
   }, [directDefaultHostId]);
 
   const handleAddDirectHost = React.useCallback(async () => {
-    const url = normalizeHostUrl(directUrl);
-    if (!url) {
+    const resolved = resolveDesktopHostUrl(directUrl);
+    if (!resolved) {
       setDirectError(t('desktopHostSwitcher.error.invalidUrl'));
       return;
     }
+    const url = resolved.persistedUrl;
     const id = typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
       ? crypto.randomUUID()
       : `host-${Date.now()}-${Math.random().toString(16).slice(2)}`;
@@ -378,6 +380,9 @@ export const RemoteInstancesPage: React.FC = () => {
     setDirectUrl('');
     setDirectToken('');
     setDirectAddDialogOpen(false);
+    if (resolved.redeemUrl) {
+      navigateToUrl(resolved.redeemUrl);
+    }
   }, [directDefaultHostId, directHosts, directLabel, directToken, directUrl, persistDirectHosts, t]);
 
   const importDirectConnectLink = React.useCallback(async () => {
@@ -427,11 +432,12 @@ export const RemoteInstancesPage: React.FC = () => {
 
   const saveDirectHostEdit = React.useCallback(async () => {
     if (!directEditingId) return;
-    const url = normalizeHostUrl(directEditUrl);
-    if (!url) {
+    const resolved = resolveDesktopHostUrl(directEditUrl);
+    if (!resolved) {
       setDirectError(t('desktopHostSwitcher.error.invalidUrl'));
       return;
     }
+    const url = resolved.persistedUrl;
     const nextHosts = directHosts.map((host) => host.id === directEditingId
       ? {
         ...host,
@@ -443,6 +449,9 @@ export const RemoteInstancesPage: React.FC = () => {
       : host);
     await persistDirectHosts(nextHosts, directDefaultHostId);
     setDirectEditingId(null);
+    if (resolved.redeemUrl) {
+      navigateToUrl(resolved.redeemUrl);
+    }
   }, [directDefaultHostId, directEditLabel, directEditToken, directEditUrl, directEditingId, directHosts, persistDirectHosts, t]);
 
   const createSshInstanceFromDialog = React.useCallback(async () => {
