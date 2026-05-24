@@ -275,6 +275,7 @@ export const registerFsRoutes = (app, dependencies) => {
   const commandTimeoutMs = createCommandTimeoutMs();
   const gitReadCacheTtlMs = createGitReadCacheTtlMs();
   const gitReadCache = new Map();
+  const inFlightGitReadCache = new Map();
 
   const pruneExecJobs = () => {
     const now = Date.now();
@@ -338,11 +339,20 @@ export const registerFsRoutes = (app, dependencies) => {
         // Refresh recency for LRU without altering the entry's age/TTL.
         gitReadCache.delete(cacheKey);
         gitReadCache.set(cacheKey, cached);
-        return { ...cached.result };
+        return { ...cached.result, command };
+      }
+      if (cached) {
+        gitReadCache.delete(cacheKey);
+      }
+
+      const inFlight = inFlightGitReadCache.get(cacheKey);
+      if (inFlight) {
+        const result = await inFlight;
+        return { ...result, command };
       }
     }
 
-    const result = await runCommandInDirectory({
+    const runPromise = runCommandInDirectory({
       shell,
       shellFlag,
       command,
@@ -350,14 +360,23 @@ export const registerFsRoutes = (app, dependencies) => {
       spawn,
       buildAugmentedPath,
       commandTimeoutMs,
+    }).then((result) => {
+      // Only cache successful results — failures may be transient.
+      if (cacheKey && result && result.success) {
+        setGitReadCacheEntry(cacheKey, result);
+      }
+      return result;
+    }).finally(() => {
+      if (cacheKey && inFlightGitReadCache.get(cacheKey) === runPromise) {
+        inFlightGitReadCache.delete(cacheKey);
+      }
     });
 
-    // Only cache successful results — failures may be transient.
-    if (cacheKey && result && result.success) {
-      setGitReadCacheEntry(cacheKey, result);
+    if (cacheKey) {
+      inFlightGitReadCache.set(cacheKey, runPromise);
     }
 
-    return result;
+    return runPromise;
   };
 
   const runExecJob = async (job) => {

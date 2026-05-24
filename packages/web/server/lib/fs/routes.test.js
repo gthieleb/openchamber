@@ -62,6 +62,29 @@ const createSpawn = ({ stdoutByCommand = {}, exitCode = 0 } = {}) => {
   return { spawn, calls };
 };
 
+const createDeferredSpawn = ({ stdoutByCommand = {}, exitCode = 0 } = {}) => {
+  const calls = [];
+  const pending = [];
+  const spawn = vi.fn((_shell, args) => {
+    const command = args[args.length - 1];
+    calls.push(command);
+    const child = new EventEmitter();
+    child.stdout = new EventEmitter();
+    child.stderr = new EventEmitter();
+    child.kill = () => {};
+    pending.push({ child, command });
+    return child;
+  });
+  const closeNext = () => {
+    const entry = pending.shift();
+    if (!entry) return;
+    const out = stdoutByCommand[entry.command];
+    if (out) entry.child.stdout.emit('data', Buffer.from(out));
+    entry.child.emit('close', exitCode, null);
+  };
+  return { spawn, calls, closeNext };
+};
+
 const registerExec = ({ spawn }) => {
   const { app, getRoute } = createRouteRegistry();
   registerFsRoutes(app, {
@@ -106,6 +129,39 @@ describe('fs exec git-read cache', () => {
     expect(second.body.results[0].stdout).toBe('/repo/.git\n.git');
     expect(second.body.success).toBe(true);
     // Spawned once; the second request is served from cache.
+    expect(calls.length).toBe(1);
+  });
+
+  it('dedupes concurrent identical git-read requests while the first is in flight', async () => {
+    const command = 'git rev-parse --absolute-git-dir --git-common-dir';
+    const { spawn, calls, closeNext } = createDeferredSpawn({ stdoutByCommand: { [command]: '/repo/.git\n.git\n' } });
+    const handler = registerExec({ spawn });
+
+    const first = callExec(handler, { commands: [command], cwd: '/repo' });
+    const second = callExec(handler, { commands: [command], cwd: '/repo' });
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(calls.length).toBe(1);
+
+    closeNext();
+    const [firstRes, secondRes] = await Promise.all([first, second]);
+
+    expect(firstRes.body.results[0].stdout).toBe('/repo/.git\n.git');
+    expect(secondRes.body.results[0].stdout).toBe('/repo/.git\n.git');
+    expect(calls.length).toBe(1);
+  });
+
+  it('returns the current request command for normalized cache hits', async () => {
+    const firstCommand = 'git   rev-parse   --absolute-git-dir';
+    const secondCommand = 'git rev-parse --absolute-git-dir';
+    const { spawn, calls } = createSpawn({ stdoutByCommand: { [firstCommand]: '/repo/.git\n' } });
+    const handler = registerExec({ spawn });
+
+    const first = await callExec(handler, { commands: [firstCommand], cwd: '/repo' });
+    const second = await callExec(handler, { commands: [secondCommand], cwd: '/repo' });
+
+    expect(first.body.results[0].command).toBe(firstCommand);
+    expect(second.body.results[0].command).toBe(secondCommand);
     expect(calls.length).toBe(1);
   });
 
