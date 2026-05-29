@@ -452,6 +452,7 @@ export const useChatTimelineController = ({
             }
 
             let loadedMessageCount = beforeMessageCount;
+            let loadedOldestMessageId = beforeOldestMessageId;
             let loadedLimit = beforeLimit;
             const beforeTurnCount = turnModelRef.current.turnCount;
 
@@ -469,9 +470,9 @@ export const useChatTimelineController = ({
                 const afterLimit = historyMetaRef.current?.limit ?? loadedLimit;
                 const messageGrowth =
                     afterMessageCount > loadedMessageCount
-                    || (typeof beforeOldestMessageId === 'string'
+                    || (typeof loadedOldestMessageId === 'string'
                         && typeof afterOldestMessageId === 'string'
-                        && beforeOldestMessageId !== afterOldestMessageId)
+                        && loadedOldestMessageId !== afterOldestMessageId)
                     || afterLimit > loadedLimit;
                 const turnGrowth = turnModelRef.current.turnCount - beforeTurnCount;
 
@@ -486,6 +487,7 @@ export const useChatTimelineController = ({
                 }
 
                 loadedMessageCount = afterMessageCount;
+                loadedOldestMessageId = afterOldestMessageId;
                 loadedLimit = afterLimit;
             }
         } finally {
