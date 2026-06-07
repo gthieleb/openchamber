@@ -2,13 +2,11 @@ import React from 'react';
 import { useSessionUIStore } from '@/sync/session-ui-store';
 import { useAllSessionStatuses, useAllLiveSessions } from '@/sync/sync-context';
 import { mergeSessionDirectoryMetadata, useGlobalSessionsStore, ensureGlobalSessionsLoaded, refreshGlobalSessions } from '@/stores/useGlobalSessionsStore';
-import { useConfigStore } from '@/stores/useConfigStore';
 import { useUIStore } from '@/stores/useUIStore';
 import { useProjectsStore } from '@/stores/useProjectsStore';
 import type { Session } from '@opencode-ai/sdk/v2';
 import type { ProjectEntry } from '@/lib/api/types';
 import { cn, formatDirectoryName } from '@/lib/utils';
-import type { SessionContextUsage } from '@/stores/types/sessionTypes';
 import { PROJECT_ICON_MAP, PROJECT_COLOR_MAP, ProjectIconImage } from '@/lib/projectMeta';
 import { useDirectoryStore } from '@/stores/useDirectoryStore';
 import { Icon } from "@/components/icon/Icon";
@@ -288,36 +286,6 @@ function UnreadIndicator({ count }: { count: number }) {
   );
 }
 
-function TokenUsageIndicator({ contextUsage }: { contextUsage: SessionContextUsage | null }) {
-  if (!contextUsage || contextUsage.totalTokens === 0) return null;
-
-  // Recompute with a fraction: contextUsage.percentage is rounded to an integer
-  // in the store, which would always render as "X.0%".
-  const percentage = contextUsage.contextLimit > 0
-    ? Math.min((contextUsage.totalTokens / contextUsage.contextLimit) * 100, 999)
-    : 0;
-  const colorClass =
-    percentage >= 90 ? 'text-[var(--status-error)]' :
-    percentage >= 75 ? 'text-[var(--status-warning)]' : 'text-[var(--status-success)]';
-
-  const formatTokens = (value: number): string => {
-    if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}M`;
-    if (value >= 1_000) return `${(value / 1_000).toFixed(1)}K`;
-    return String(value);
-  };
-
-  const tokens = contextUsage.contextLimit > 0
-    ? `${formatTokens(contextUsage.totalTokens)}/${formatTokens(contextUsage.contextLimit)}`
-    : formatTokens(contextUsage.totalTokens);
-
-  return (
-    <span className="flex items-baseline gap-1.5 text-[15px] tabular-nums">
-      <span className={cn("font-medium", colorClass)}>{percentage.toFixed(1)}%</span>
-      <span className="text-[var(--surface-mutedForeground)]">{tokens}</span>
-    </span>
-  );
-}
-
 // A single session row sized for comfortable touch.
 function SessionItem({
   session,
@@ -498,8 +466,6 @@ export const MobileSessionStatusBar: React.FC<MobileSessionStatusBarProps> = ({
   const sessionStatus = useAllSessionStatuses();
   const setCurrentSession = useSessionUIStore((state) => state.setCurrentSession);
   const openNewSessionDraft = useSessionUIStore((state) => state.openNewSessionDraft);
-  const getContextUsage = useSessionUIStore((state) => state.getContextUsage);
-  const getCurrentModel = useConfigStore((state) => state.getCurrentModel);
   const open = useUIStore((state) => state.mobileSessionPanelOpen);
   const setOpen = useUIStore((state) => state.setMobileSessionPanelOpen);
 
@@ -552,15 +518,6 @@ export const MobileSessionStatusBar: React.FC<MobileSessionStatusBarProps> = ({
     [filteredSessions],
   );
 
-  // Token usage for the current session.
-  const currentModel = getCurrentModel();
-  const limit = currentModel && typeof currentModel.limit === 'object' && currentModel.limit !== null
-    ? (currentModel.limit as Record<string, unknown>)
-    : null;
-  const contextLimit = (limit && typeof limit.context === 'number' ? limit.context : 0);
-  const outputLimit = (limit && typeof limit.output === 'number' ? limit.output : 0);
-  const contextUsage = getContextUsage(contextLimit, outputLimit);
-
   const handleSessionClick = (session: SessionWithStatus) => {
     setCurrentSession(session.id, sessionDirectory(session) || null);
     onSessionSwitch?.(session.id);
@@ -601,7 +558,6 @@ export const MobileSessionStatusBar: React.FC<MobileSessionStatusBarProps> = ({
         <div className="flex items-center gap-3">
           <RunningIndicator count={totalRunning} />
           <UnreadIndicator count={totalUnread} />
-          <TokenUsageIndicator contextUsage={contextUsage} />
           <button
             type="button"
             onClick={handleNewChat}
@@ -652,7 +608,7 @@ export const MobileSessionStatusBar: React.FC<MobileSessionStatusBarProps> = ({
         </div>
       )}
     </div>
-  ), [t, totalRunning, totalUnread, contextUsage, projects, filterProjectId, setFilterProjectId, formatProjectLabel, currentTheme, getProjectStatus, handleNewChat, setOpen]);
+  ), [t, totalRunning, totalUnread, projects, filterProjectId, setFilterProjectId, formatProjectLabel, currentTheme, getProjectStatus, handleNewChat, setOpen]);
 
   if (!isMobile) {
     return null;
