@@ -1119,7 +1119,7 @@ const MAX_BLOCK_CODE_SCAN_LENGTH = 200_000;
 const FILE_REFERENCE_STAT_CONCURRENCY = 4;
 const FILE_REFERENCE_STAT_CACHE_MAX = 1000;
 const VSCODE_FILE_REFERENCE_STAT_CACHE_MAX = 200;
-const FILE_REFERENCE_LINK_LIMIT = 200;
+const FILE_REFERENCE_LINK_LIMIT = 80;
 const VSCODE_FILE_REFERENCE_LINK_LIMIT = 40;
 const FILE_REFERENCE_STAT_CACHE = new Map<string, Promise<boolean>>();
 let activeFileReferenceStatCount = 0;
@@ -1462,11 +1462,18 @@ const fileReferenceExists = (resolvedPath: string): Promise<boolean> => {
   const request = new Promise<boolean>((resolve) => {
     const run = () => {
       activeFileReferenceStatCount += 1;
-      void runtimeFetch(`/api/fs/stat?path=${encodeURIComponent(normalizedPath)}`, {
+      void runtimeFetch(`/api/fs/stat?path=${encodeURIComponent(normalizedPath)}&optional=true`, {
         method: 'GET',
         cache: 'no-store',
       })
-        .then((response) => resolve(response.ok))
+        .then(async (response) => {
+          if (!response.ok) {
+            resolve(false);
+            return;
+          }
+          const payload = await response.json().catch(() => null) as { exists?: unknown } | null;
+          resolve(payload?.exists !== false);
+        })
         .catch(() => resolve(false))
         .finally(() => {
           activeFileReferenceStatCount = Math.max(0, activeFileReferenceStatCount - 1);
@@ -1546,6 +1553,24 @@ const useFileReferenceInteractions = ({
       clearAnnotatedFileLinks();
       return;
     }
+
+    const scheduleAnnotation = (delayMs = 0) => {
+      if (annotationDebounceRef.current !== null && typeof window !== 'undefined') {
+        window.clearTimeout(annotationDebounceRef.current);
+      }
+      if (typeof window === 'undefined') {
+        annotateFileLinks();
+        return;
+      }
+      annotationDebounceRef.current = window.setTimeout(() => {
+        annotationDebounceRef.current = null;
+        window.requestAnimationFrame(() => {
+          if (!cancelled) {
+            annotateFileLinks();
+          }
+        });
+      }, delayMs);
+    };
 
     const annotateFileLinks = () => {
       if (enabled) {
@@ -1674,20 +1699,10 @@ const useFileReferenceInteractions = ({
       void openFileReference(target);
     };
 
-    annotateFileLinks();
+    scheduleAnnotation();
 
     const observer = new MutationObserver(() => {
-      if (annotationDebounceRef.current !== null && typeof window !== 'undefined') {
-        window.clearTimeout(annotationDebounceRef.current);
-      }
-      if (typeof window === 'undefined') {
-        annotateFileLinks();
-        return;
-      }
-      annotationDebounceRef.current = window.setTimeout(() => {
-        annotationDebounceRef.current = null;
-        annotateFileLinks();
-      }, 120);
+      scheduleAnnotation(160);
     });
     observer.observe(container, {
       childList: true,
