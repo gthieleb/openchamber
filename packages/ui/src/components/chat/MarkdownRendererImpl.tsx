@@ -216,6 +216,10 @@ const TableCopyButton: React.FC<{ tableRef: React.RefObject<HTMLDivElement | nul
   const menuRef = React.useRef<HTMLDivElement>(null);
 
   React.useEffect(() => {
+    if (!showMenu) {
+      return;
+    }
+
     const handleClickOutside = (e: MouseEvent) => {
       if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
         setShowMenu(false);
@@ -223,7 +227,7 @@ const TableCopyButton: React.FC<{ tableRef: React.RefObject<HTMLDivElement | nul
     };
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, []);
+  }, [showMenu]);
 
   const handleCopy = async (format: 'csv' | 'tsv' | 'markdown') => {
     const tableEl = tableRef.current?.querySelector('table');
@@ -308,6 +312,10 @@ const TableDownloadButton: React.FC<{ tableRef: React.RefObject<HTMLDivElement |
   const menuRef = React.useRef<HTMLDivElement>(null);
 
   React.useEffect(() => {
+    if (!showMenu) {
+      return;
+    }
+
     const handleClickOutside = (e: MouseEvent) => {
       if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
         setShowMenu(false);
@@ -315,7 +323,7 @@ const TableDownloadButton: React.FC<{ tableRef: React.RefObject<HTMLDivElement |
     };
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, []);
+  }, [showMenu]);
 
    const handleDownload = (format: 'csv' | 'markdown') => {
       const tableEl = tableRef.current?.querySelector('table');
