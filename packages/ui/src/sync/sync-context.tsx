@@ -23,7 +23,7 @@ import { bootstrapGlobal, bootstrapDirectory } from "./bootstrap"
 import { retry } from "./retry"
 import { updateStreamingState } from "./streaming"
 import { setActionRefs } from "./session-actions"
-import { setSyncRefs } from "./sync-refs"
+import { setSyncRefs, getAllSyncSessions } from "./sync-refs"
 import { stripMessageDiffSnapshots, stripSessionDiffSnapshots } from "./sanitize"
 import { syncDebug } from "./debug"
 import { getReconnectCandidateSessionIds } from "./reconnect-recovery"
@@ -260,6 +260,7 @@ async function materializeSessionFromServer(
   directory: string,
   sessionID: string,
   store: StoreApi<DirectoryStore>,
+  options?: { isStale?: () => boolean },
 ) {
   const scopedClient = opencodeClient.getScopedSdkClient(directory)
   const result = await retry(async () => {
@@ -277,6 +278,8 @@ async function materializeSessionFromServer(
     cursor,
     complete: !cursor,
   })
+
+  if (options?.isStale?.()) return
 
   store.setState((state: DirectoryStore) => {
     const materialized = materializeSessionSnapshots(
@@ -2177,6 +2180,100 @@ export function useSessions(directory?: string) {
   )
 }
 
+const EMPTY_SCOPED_IDS = new Set<string>()
+
+const computeSubtreeIds = (sessions: Session[], rootId: string): Set<string> => {
+  const childrenByParent = new Map<string, string[]>()
+  for (const session of sessions) {
+    if (!session.parentID) continue
+    const list = childrenByParent.get(session.parentID) ?? []
+    list.push(session.id)
+    childrenByParent.set(session.parentID, list)
+  }
+  const ids = new Set<string>([rootId])
+  const queue = [rootId]
+  for (const id of queue) {
+    const children = childrenByParent.get(id)
+    if (!children) continue
+    for (const childId of children) {
+      if (ids.has(childId)) continue
+      ids.add(childId)
+      queue.push(childId)
+    }
+  }
+  return ids
+}
+
+export function useScopedSubtreeIds(sessionID: string | null, directory?: string): Set<string> {
+  return useDirectorySync(
+    useCallback((state: State) => {
+      if (!sessionID) return EMPTY_SCOPED_IDS
+      return computeSubtreeIds(state.session, sessionID)
+    }, [sessionID]),
+    directory,
+  )
+}
+
+export function useScopedBlockingPermissions(sessionID: string | null, directory?: string): PermissionRequest[] {
+  return useDirectorySync(
+    useCallback((state: State) => {
+      if (!sessionID) return EMPTY_PERMISSION_REQUESTS
+      const scopedIds = computeSubtreeIds(state.session, sessionID)
+      if (scopedIds.size === 0) return EMPTY_PERMISSION_REQUESTS
+      const seen = new Set<string>()
+      const result: PermissionRequest[] = []
+      for (const id of scopedIds) {
+        const entries = state.permission[id]
+        if (!entries) continue
+        for (const entry of entries) {
+          if (seen.has(entry.id)) continue
+          seen.add(entry.id)
+          result.push(entry)
+        }
+      }
+      return result.length === 0 ? EMPTY_PERMISSION_REQUESTS : result
+    }, [sessionID]),
+    directory,
+  )
+}
+
+export function useScopedBlockingQuestions(sessionID: string | null, directory?: string): QuestionRequest[] {
+  return useDirectorySync(
+    useCallback((state: State) => {
+      if (!sessionID) return EMPTY_QUESTION_REQUESTS
+      const scopedIds = computeSubtreeIds(state.session, sessionID)
+      if (scopedIds.size === 0) return EMPTY_QUESTION_REQUESTS
+      const seen = new Set<string>()
+      const result: QuestionRequest[] = []
+      for (const id of scopedIds) {
+        const entries = state.question[id]
+        if (!entries) continue
+        for (const entry of entries) {
+          if (seen.has(entry.id)) continue
+          seen.add(entry.id)
+          result.push(entry)
+        }
+      }
+      return result.length === 0 ? EMPTY_QUESTION_REQUESTS : result
+    }, [sessionID]),
+    directory,
+  )
+}
+
+export function useParentSession(sessionID: string | null, directory?: string): Session | null {
+  return useDirectorySync(
+    useCallback((state: State) => {
+      if (!sessionID) return null
+      const current = state.session.find((s) => s.id === sessionID)
+      if (!current?.parentID) return null
+      return state.session.find((s) => s.id === current.parentID)
+        ?? getAllSyncSessions().find((s) => s.id === current.parentID)
+        ?? null
+    }, [sessionID]),
+    directory,
+  )
+}
+
 const getSidebarSessionSignature = (session: Session, stableUpdatedAt: number): string => {
   const directory = (session as Session & { directory?: string | null }).directory ?? ''
   const parentID = (session as Session & { parentID?: string | null }).parentID ?? ''
@@ -2671,6 +2768,7 @@ export function useEnsureSessionMessages(sessionID: string, directory?: string) 
   const syncDirectory = useSyncDirectory()
   const resolvedDirectory = directory ?? syncDirectory
   const store = useDirectoryStore(resolvedDirectory)
+  const requestGenerationRef = React.useRef(0)
 
   React.useEffect(() => {
     if (!sessionID) return
@@ -2685,11 +2783,14 @@ export function useEnsureSessionMessages(sessionID: string, directory?: string) 
     // Already loading this session for this directory
     if (_ensureMessagesLoading.has(loadingKey)) return
 
+    const generation = ++requestGenerationRef.current
+    const isStale = () => generation !== requestGenerationRef.current
+
     _ensureMessagesLoading.add(loadingKey)
 
     void (async () => {
       try {
-        await materializeSessionFromServer(resolvedDirectory, sessionID, store)
+        await materializeSessionFromServer(resolvedDirectory, sessionID, store, { isStale })
       } catch {
         // Transient failure — next navigation or reconnect will retry
       } finally {

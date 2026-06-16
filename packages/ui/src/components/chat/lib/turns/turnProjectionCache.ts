@@ -1,0 +1,67 @@
+import type { ChatMessageEntry, TurnProjectionResult } from './types';
+import { isVSCodeRuntime } from '@/lib/desktop';
+import { isMobileSurfaceRuntime } from '@/lib/runtimeSurface';
+
+const TURN_PROJECTION_CACHE_MAX = 30;
+const VSCODE_TURN_PROJECTION_CACHE_MAX = 4;
+const MOBILE_TURN_PROJECTION_CACHE_MAX = 4;
+
+const projectionCache = new Map<string, TurnProjectionResult>();
+
+const getProjectionCacheMax = () => {
+  if (isVSCodeRuntime()) return VSCODE_TURN_PROJECTION_CACHE_MAX;
+  if (isMobileSurfaceRuntime()) return MOBILE_TURN_PROJECTION_CACHE_MAX;
+  return TURN_PROJECTION_CACHE_MAX;
+};
+
+const buildProjectionCacheKey = (
+  sessionKey: string,
+  messages: ChatMessageEntry[],
+  showTextJustificationActivity: boolean,
+  showTurnChangedFiles: boolean,
+): string => {
+  const lastMessage = messages.length > 0 ? messages[messages.length - 1] : undefined;
+  const lastMessageId = lastMessage?.info?.id ?? '';
+  const lastMessagePartCount = lastMessage?.parts?.length ?? 0;
+  return [
+    sessionKey,
+    messages.length,
+    lastMessageId,
+    lastMessagePartCount,
+    showTextJustificationActivity ? '1' : '0',
+    showTurnChangedFiles ? '1' : '0',
+  ].join('|');
+};
+
+export const getCachedProjection = (
+  sessionKey: string,
+  messages: ChatMessageEntry[],
+  showTextJustificationActivity: boolean,
+  showTurnChangedFiles: boolean,
+): TurnProjectionResult | undefined => {
+  const key = buildProjectionCacheKey(sessionKey, messages, showTextJustificationActivity, showTurnChangedFiles);
+  return projectionCache.get(key);
+};
+
+export const setCachedProjection = (
+  key: string,
+  projection: TurnProjectionResult,
+): void => {
+  projectionCache.delete(key);
+  const max = getProjectionCacheMax();
+  while (projectionCache.size >= max) {
+    const oldest = projectionCache.keys().next().value;
+    if (typeof oldest !== 'string') break;
+    projectionCache.delete(oldest);
+  }
+  projectionCache.set(key, projection);
+};
+
+export const buildAndSetProjectionCacheKey = (
+  sessionKey: string,
+  messages: ChatMessageEntry[],
+  showTextJustificationActivity: boolean,
+  showTurnChangedFiles: boolean,
+): string => {
+  return buildProjectionCacheKey(sessionKey, messages, showTextJustificationActivity, showTurnChangedFiles);
+};

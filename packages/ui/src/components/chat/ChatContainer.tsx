@@ -1,5 +1,7 @@
 import React from 'react';
 import type { Message, Part, Session } from '@opencode-ai/sdk/v2';
+import type { PermissionRequest } from '@/types/permission';
+import type { QuestionRequest } from '@/types/question';
 
 import { ChatInput } from './ChatInput';
 import { DraftPresetChips } from './DraftPresetChips';
@@ -23,14 +25,8 @@ import { useDeviceInfo } from '@/lib/device';
 import { Button } from '@/components/ui/button';
 import { OverlayScrollbar } from '@/components/ui/OverlayScrollbar';
 import { Icon } from "@/components/icon/Icon";
-import type { PermissionRequest } from '@/types/permission';
-import type { QuestionRequest } from '@/types/question';
 import { cn, formatDirectoryName } from '@/lib/utils';
 import { useProjectsStore } from '@/stores/useProjectsStore';
-import {
-    collectVisibleSessionIdsForBlockingRequests,
-    flattenBlockingRequests,
-} from './lib/blockingRequests';
 
 // New sync system imports
 import { useSessionUIStore } from '@/sync/session-ui-store';
@@ -38,22 +34,21 @@ import { useStreamingStore } from '@/sync/streaming';
 import {
     useSessionMessageCount,
     useSessionMessageRecords,
-    useSessions,
-    useDirectorySync,
     useSyncDirectory,
+    useDirectorySync,
     useSessionStatus,
+    useScopedBlockingPermissions,
+    useScopedBlockingQuestions,
+    useParentSession,
 } from '@/sync/sync-context';
 import { useSync } from '@/sync/use-sync';
 import { getSessionPrefetch, subscribeSessionPrefetch } from '@/sync/session-prefetch-cache';
 import { getSessionMaterializationStatus } from '@/sync/materialization';
 import { usePlanDetection } from '@/hooks/usePlanDetection';
-import { getAllSyncSessions } from '@/sync/sync-refs';
 import { useI18n } from '@/lib/i18n';
 import { isVSCodeRuntime } from '@/lib/desktop';
 
 const EMPTY_MESSAGES: Array<{ info: Message; parts: Part[] }> = [];
-const EMPTY_PERMISSIONS: PermissionRequest[] = [];
-const EMPTY_QUESTIONS: QuestionRequest[] = [];
 const IDLE_SESSION_STATUS = { type: 'idle' as const };
 const CHAT_FORCE_SCROLL_BOTTOM_EVENT = 'openchamber:chat-force-scroll-bottom';
 const DEFAULT_RETRY_MESSAGE = 'Quota limit reached. Retrying automatically.';
@@ -423,55 +418,18 @@ export const ChatContainer: React.FC<ChatContainerProps> = ({ autoOpenDraft = tr
         React.useCallback(() => undefined, []),
     );
 
-    // Sessions from sync system
-    const sessions = useSessions(effectiveSessionDirectory);
-
     // Plan detection - watches messages for plan creation and signals store
     usePlanDetection(currentSessionId ?? '', sessionMessages);
 
     // Session status from sync system
     const sessionStatusForCurrent = useSessionStatus(currentSessionId ?? '', effectiveSessionDirectory) ?? IDLE_SESSION_STATUS;
 
-    // Permissions & questions from sync system
-    const allPermissions = useDirectorySync(
-        React.useCallback((s) => s.permission ?? {}, []),
-        effectiveSessionDirectory,
-    );
-    const allQuestions = useDirectorySync(
-        React.useCallback((s) => s.question ?? {}, []),
-        effectiveSessionDirectory,
-    );
+    // Scoped blocking requests — only subscribe to permissions/questions for
+    // the current session + descendant subagent sessions, not all sessions in
+    // the directory.
+    const sessionPermissions = useScopedBlockingPermissions(currentSessionId, effectiveSessionDirectory);
+    const sessionQuestions = useScopedBlockingQuestions(currentSessionId, effectiveSessionDirectory);
 
-    // Convert Record → Map for blockingRequests helpers
-    const permissionsMap = React.useMemo(() => {
-        const m = new Map<string, PermissionRequest[]>();
-        for (const [k, v] of Object.entries(allPermissions)) m.set(k, v as PermissionRequest[]);
-        return m;
-    }, [allPermissions]);
-
-    const questionsMap = React.useMemo(() => {
-        const m = new Map<string, QuestionRequest[]>();
-        for (const [k, v] of Object.entries(allQuestions)) m.set(k, v as QuestionRequest[]);
-        return m;
-    }, [allQuestions]);
-
-    const scopedSessionIds = React.useMemo(
-        () => collectVisibleSessionIdsForBlockingRequests(
-            sessions.map((session) => ({ id: session.id, parentID: session.parentID })),
-            currentSessionId,
-        ),
-        [sessions, currentSessionId],
-    );
-
-    const sessionPermissions = React.useMemo(() => {
-        if (scopedSessionIds.length === 0) return EMPTY_PERMISSIONS;
-        return flattenBlockingRequests(permissionsMap, scopedSessionIds);
-    }, [permissionsMap, scopedSessionIds]);
-
-    const sessionQuestions = React.useMemo(() => {
-        if (scopedSessionIds.length === 0) return EMPTY_QUESTIONS;
-        return flattenBlockingRequests(questionsMap, scopedSessionIds);
-    }, [questionsMap, scopedSessionIds]);
     const sessionIsWorking = React.useMemo(() => {
         if (!currentSessionId || sessionPermissions.length > 0 || sessionQuestions.length > 0) {
             return false;
@@ -561,15 +519,7 @@ export const ChatContainer: React.FC<ChatContainerProps> = ({ autoOpenDraft = tr
         return project ? getProjectDisplayLabel(project) : null;
     }, [activeProjectId, newSessionDraft?.selectedProjectId, projects]);
 
-    const parentSession = React.useMemo(() => {
-        if (!currentSessionId) return null;
-        const current = sessions.find((session) => session.id === currentSessionId);
-        const parentID = current?.parentID;
-        if (!parentID) return null;
-        return sessions.find((session) => session.id === parentID)
-            ?? getAllSyncSessions().find((session) => session.id === parentID)
-            ?? null;
-    }, [currentSessionId, sessions]);
+    const parentSession = useParentSession(currentSessionId, effectiveSessionDirectory);
 
     const handleReturnToParentSession = React.useCallback(() => {
         if (!parentSession) return;

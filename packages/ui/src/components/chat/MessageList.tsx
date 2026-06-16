@@ -17,8 +17,7 @@ import { streamPerfCount, streamPerfMeasure } from '@/stores/utils/streamDebug';
 import type { StreamPhase } from './message/types';
 import { normalizeParts } from './message/partUtils';
 import { useGlobalSessionsStore } from '@/stores/useGlobalSessionsStore';
-import { getReviewTransferDirection, type ReviewTransferDirection } from '@/lib/reviewFlow';
-import { getOriginalSessionID, getReviewSessionID } from '@/lib/sessionReviewMetadata';
+import type { ReviewTransferDirection } from '@/lib/reviewFlow';
 
 const MESSAGE_LIST_VIRTUALIZE_THRESHOLD = 5;
 const EMPTY_STATIC_ENTRY_MESSAGES: ChatMessageEntry[] = [];
@@ -1149,18 +1148,7 @@ const MessageList = React.forwardRef<MessageListHandle, MessageListProps>(({
     const showTurnChangedFiles = useUIStore((state) => state.showTurnChangedFiles);
     const defaultActivityExpanded = activityRenderMode === 'summary';
     const reviewTransferDirection = useGlobalSessionsStore((state) => {
-        const currentSession = state.activeSessions.find((session) => session.id === sessionKey);
-        const direction = getReviewTransferDirection(currentSession);
-        if (!currentSession || !direction) return null;
-
-        const targetSessionId = direction === 'review-to-original'
-            ? getOriginalSessionID(currentSession)
-            : getReviewSessionID(currentSession);
-        if (!targetSessionId) return null;
-
-        return state.activeSessions.some((session) => session.id === targetSessionId)
-            ? direction
-            : null;
+        return state.reviewTransferBySessionId.get(sessionKey) ?? null;
     });
     const [turnUiStates, setTurnUiStates] = React.useState<Map<string, TurnUiState>>(() => new Map());
     const userAnimationRef = React.useRef<{
