@@ -47,6 +47,7 @@ import { getRegisteredRuntimeAPIs } from "@/contexts/runtimeAPIRegistry"
 import { setSessionPrefetch } from "./session-prefetch-cache"
 import { listGlobalSessionPages } from "@/stores/globalSessions"
 import { useGlobalSessionsStore } from "@/stores/useGlobalSessionsStore"
+import { areRequestArraysReferentiallyEqual, collectScopedBlockingRequests, computeSubtreeIds } from "./scoped-blocking-requests"
 
 // ---------------------------------------------------------------------------
 // Context
@@ -2181,27 +2182,14 @@ export function useSessions(directory?: string) {
 }
 
 const EMPTY_SCOPED_IDS = new Set<string>()
+const selectPermissionRequestsBySession = (state: State) => state.permission
+const selectQuestionRequestsBySession = (state: State) => state.question
 
-const computeSubtreeIds = (sessions: Session[], rootId: string): Set<string> => {
-  const childrenByParent = new Map<string, string[]>()
-  for (const session of sessions) {
-    if (!session.parentID) continue
-    const list = childrenByParent.get(session.parentID) ?? []
-    list.push(session.id)
-    childrenByParent.set(session.parentID, list)
-  }
-  const ids = new Set<string>([rootId])
-  const queue = [rootId]
-  for (const id of queue) {
-    const children = childrenByParent.get(id)
-    if (!children) continue
-    for (const childId of children) {
-      if (ids.has(childId)) continue
-      ids.add(childId)
-      queue.push(childId)
-    }
-  }
-  return ids
+type ScopedBlockingRequestCache<T extends { id: string }> = {
+  sessionID: string | null
+  sessions: Session[] | null
+  requestsBySession: Record<string, T[] | undefined> | null
+  result: T[]
 }
 
 export function useScopedSubtreeIds(sessionID: string | null, directory?: string): Set<string> {
@@ -2214,50 +2202,51 @@ export function useScopedSubtreeIds(sessionID: string | null, directory?: string
   )
 }
 
-export function useScopedBlockingPermissions(sessionID: string | null, directory?: string): PermissionRequest[] {
+function useScopedBlockingRequests<T extends { id: string }>(
+  sessionID: string | null,
+  directory: string | undefined,
+  selectRequestsBySession: (state: State) => Record<string, T[] | undefined>,
+  empty: T[],
+): T[] {
+  const cacheRef = useRef<ScopedBlockingRequestCache<T>>({
+    sessionID: null,
+    sessions: null,
+    requestsBySession: null,
+    result: empty,
+  })
+
   return useDirectorySync(
     useCallback((state: State) => {
-      if (!sessionID) return EMPTY_PERMISSION_REQUESTS
-      const scopedIds = computeSubtreeIds(state.session, sessionID)
-      if (scopedIds.size === 0) return EMPTY_PERMISSION_REQUESTS
-      const seen = new Set<string>()
-      const result: PermissionRequest[] = []
-      for (const id of scopedIds) {
-        const entries = state.permission[id]
-        if (!entries) continue
-        for (const entry of entries) {
-          if (seen.has(entry.id)) continue
-          seen.add(entry.id)
-          result.push(entry)
-        }
+      const requestsBySession = selectRequestsBySession(state)
+      const cache = cacheRef.current
+      if (
+        cache.sessionID === sessionID
+        && cache.sessions === state.session
+        && cache.requestsBySession === requestsBySession
+      ) {
+        return cache.result
       }
-      return result.length === 0 ? EMPTY_PERMISSION_REQUESTS : result
-    }, [sessionID]),
+
+      const next = collectScopedBlockingRequests(state.session, requestsBySession, sessionID, empty)
+      const result = areRequestArraysReferentiallyEqual(cache.result, next) ? cache.result : next
+      cacheRef.current = {
+        sessionID,
+        sessions: state.session,
+        requestsBySession,
+        result,
+      }
+      return result
+    }, [empty, selectRequestsBySession, sessionID]),
     directory,
   )
 }
 
+export function useScopedBlockingPermissions(sessionID: string | null, directory?: string): PermissionRequest[] {
+  return useScopedBlockingRequests(sessionID, directory, selectPermissionRequestsBySession, EMPTY_PERMISSION_REQUESTS)
+}
+
 export function useScopedBlockingQuestions(sessionID: string | null, directory?: string): QuestionRequest[] {
-  return useDirectorySync(
-    useCallback((state: State) => {
-      if (!sessionID) return EMPTY_QUESTION_REQUESTS
-      const scopedIds = computeSubtreeIds(state.session, sessionID)
-      if (scopedIds.size === 0) return EMPTY_QUESTION_REQUESTS
-      const seen = new Set<string>()
-      const result: QuestionRequest[] = []
-      for (const id of scopedIds) {
-        const entries = state.question[id]
-        if (!entries) continue
-        for (const entry of entries) {
-          if (seen.has(entry.id)) continue
-          seen.add(entry.id)
-          result.push(entry)
-        }
-      }
-      return result.length === 0 ? EMPTY_QUESTION_REQUESTS : result
-    }, [sessionID]),
-    directory,
-  )
+  return useScopedBlockingRequests(sessionID, directory, selectQuestionRequestsBySession, EMPTY_QUESTION_REQUESTS)
 }
 
 export function useParentSession(sessionID: string | null, directory?: string): Session | null {
