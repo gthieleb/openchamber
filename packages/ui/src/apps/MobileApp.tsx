@@ -7,6 +7,7 @@ import { McpDropdownContent } from '@/components/mcp/McpDropdown';
 import { AboutSettings } from '@/components/sections/openchamber/AboutSettings';
 import { OpenCodeUpdateToast } from '@/components/update/OpenCodeUpdateToast';
 import { ConfigUpdateOverlay } from '@/components/ui/ConfigUpdateOverlay';
+import { Button } from '@/components/ui/button';
 import { ProviderLogo } from '@/components/ui/ProviderLogo';
 import { ChatView } from '@/components/views/ChatView';
 import { SettingsView } from '@/components/views/SettingsView';
@@ -29,6 +30,7 @@ import { resolveProjectForDirectory, resolveProjectForSessionDirectory } from '@
 import { clampPercent, formatQuotaResetLabel, formatQuotaValueLabel, formatWindowLabel, QUOTA_PROVIDERS, resolveUsageTone } from '@/lib/quota';
 import { getDisplayModelName } from '@/lib/quota/model-families';
 import { runtimeFetch } from '@/lib/runtime-fetch';
+import { switchRuntimeEndpoint } from '@/lib/runtime-switch';
 import { sessionEvents } from '@/lib/sessionEvents';
 import { cn } from '@/lib/utils';
 import { useConfigStore } from '@/stores/useConfigStore';
@@ -76,6 +78,76 @@ type MobileAppProps = {
   apis: RuntimeAPIs;
 };
 
+const MOBILE_CONNECTIONS_STORAGE_KEY = 'openchamber.mobile.connections.v1';
+
+type MobileSavedConnection = {
+  id: string;
+  label: string;
+  url: string;
+  clientToken?: string;
+  lastUsedAt: number;
+};
+
+const normalizeConnectionUrl = (value: string): string => {
+  const trimmed = value.trim();
+  if (!trimmed) return '';
+  const withScheme = /^https?:\/\//i.test(trimmed) ? trimmed : `http://${trimmed}`;
+  const url = new URL(withScheme);
+  url.hash = '';
+  url.search = '';
+  url.pathname = url.pathname.replace(/\/+$/, '');
+  return url.toString().replace(/\/+$/, '');
+};
+
+const getConnectionLabel = (url: string): string => {
+  try {
+    const parsed = new URL(url);
+    return parsed.host;
+  } catch {
+    return url;
+  }
+};
+
+const loadMobileConnections = (): MobileSavedConnection[] => {
+  if (typeof window === 'undefined') return [];
+  try {
+    const parsed = JSON.parse(window.localStorage.getItem(MOBILE_CONNECTIONS_STORAGE_KEY) || '[]') as unknown;
+    if (!Array.isArray(parsed)) return [];
+    return parsed.flatMap((item): MobileSavedConnection[] => {
+      if (!item || typeof item !== 'object') return [];
+      const candidate = item as Partial<MobileSavedConnection>;
+      if (typeof candidate.id !== 'string' || typeof candidate.url !== 'string') return [];
+      return [{
+        id: candidate.id,
+        label: typeof candidate.label === 'string' && candidate.label.trim() ? candidate.label : getConnectionLabel(candidate.url),
+        url: candidate.url,
+        clientToken: typeof candidate.clientToken === 'string' && candidate.clientToken.trim() ? candidate.clientToken : undefined,
+        lastUsedAt: typeof candidate.lastUsedAt === 'number' ? candidate.lastUsedAt : 0,
+      }];
+    }).sort((a, b) => b.lastUsedAt - a.lastUsedAt);
+  } catch {
+    return [];
+  }
+};
+
+const saveMobileConnections = (connections: MobileSavedConnection[]): void => {
+  if (typeof window === 'undefined') return;
+  window.localStorage.setItem(MOBILE_CONNECTIONS_STORAGE_KEY, JSON.stringify(connections.slice(0, 12)));
+};
+
+const upsertMobileConnection = (connection: Omit<MobileSavedConnection, 'id' | 'lastUsedAt'>): MobileSavedConnection[] => {
+  const connections = loadMobileConnections();
+  const existing = connections.find((item) => item.url === connection.url);
+  const nextConnection: MobileSavedConnection = {
+    id: existing?.id || crypto.randomUUID(),
+    ...connection,
+    lastUsedAt: Date.now(),
+  };
+  const next = [nextConnection, ...connections.filter((item) => item.id !== nextConnection.id && item.url !== nextConnection.url)];
+  saveMobileConnections(next);
+  return next;
+};
+
 const normalizePath = (value?: string | null): string =>
   (value || '').replace(/\\/g, '/').replace(/\/+$/g, '');
 
@@ -120,6 +192,150 @@ type ContextDisplay = {
 const getProjectDisplayLabel = (project: ProjectEntry | null, fallbackDirectory: string): string => {
   if (project) return project.label?.trim() || getProjectLabel(project.path);
   return getProjectLabel(fallbackDirectory);
+};
+
+const MobileConnectionWelcome: React.FC<{ onConnected: () => void }> = ({ onConnected }) => {
+  const { t } = useI18n();
+  const [serverUrl, setServerUrl] = React.useState('');
+  const [clientToken, setClientToken] = React.useState('');
+  const [connections, setConnections] = React.useState<MobileSavedConnection[]>(() => loadMobileConnections());
+  const [isConnecting, setIsConnecting] = React.useState(false);
+  const [error, setError] = React.useState<string | null>(null);
+  const [qrHintVisible, setQrHintVisible] = React.useState(false);
+
+  const connect = React.useCallback(async (input: { url: string; clientToken?: string }) => {
+    setError(null);
+    setIsConnecting(true);
+    try {
+      const normalizedUrl = normalizeConnectionUrl(input.url);
+      if (!normalizedUrl) {
+        setError(t('mobile.connect.error.urlRequired'));
+        return;
+      }
+
+      const health = await fetch(`${normalizedUrl}/health`, {
+        method: 'GET',
+        headers: input.clientToken ? { Authorization: `Bearer ${input.clientToken}` } : undefined,
+      }).catch(() => null);
+
+      if (!health || !health.ok) {
+        setError(t('mobile.connect.error.unreachable'));
+        return;
+      }
+
+      const nextConnections = upsertMobileConnection({
+        label: getConnectionLabel(normalizedUrl),
+        url: normalizedUrl,
+        clientToken: input.clientToken?.trim() || undefined,
+      });
+      setConnections(nextConnections);
+      switchRuntimeEndpoint({ apiBaseUrl: normalizedUrl, clientToken: input.clientToken?.trim() || null });
+      onConnected();
+    } catch {
+      setError(t('mobile.connect.error.invalidUrl'));
+    } finally {
+      setIsConnecting(false);
+    }
+  }, [onConnected, t]);
+
+  const handleSubmit = React.useCallback((event: React.FormEvent) => {
+    event.preventDefault();
+    void connect({ url: serverUrl, clientToken });
+  }, [clientToken, connect, serverUrl]);
+
+  return (
+    <main className="min-h-dvh bg-background px-5 pb-[calc(env(safe-area-inset-bottom)+24px)] pt-[calc(env(safe-area-inset-top)+32px)] text-foreground">
+      <div className="mx-auto flex min-h-[calc(100dvh-72px)] w-full max-w-[460px] flex-col justify-between gap-8">
+        <section className="space-y-7">
+          <div className="space-y-4 pt-4">
+            <div className="flex size-14 items-center justify-center rounded-[20px] border border-border/70 bg-surface-elevated text-primary">
+              <Icon name="sparkling" className="size-7" />
+            </div>
+            <div className="space-y-3">
+              <p className="typography-micro uppercase tracking-[0.16em] text-muted-foreground">OpenChamber</p>
+              <h1 className="typography-h2 text-foreground">{t('mobile.connect.welcome.title')}</h1>
+              <p className="typography-body text-muted-foreground">{t('mobile.connect.welcome.description')}</p>
+            </div>
+          </div>
+
+          <form className="space-y-4 rounded-[28px] border border-border/70 bg-surface-elevated p-4 shadow-sm" onSubmit={handleSubmit}>
+            <label className="block space-y-2">
+              <span className="typography-ui-label text-foreground">{t('mobile.connect.url.label')}</span>
+              <input
+                value={serverUrl}
+                onChange={(event) => setServerUrl(event.target.value)}
+                placeholder={t('mobile.connect.url.placeholder')}
+                inputMode="url"
+                autoCapitalize="none"
+                autoCorrect="off"
+                className="h-12 w-full rounded-[16px] border border-border/70 bg-background px-3 text-[16px] text-foreground outline-none transition-colors placeholder:text-muted-foreground focus:border-primary focus:ring-2 focus:ring-primary/20"
+              />
+            </label>
+            <label className="block space-y-2">
+              <span className="typography-ui-label text-foreground">{t('mobile.connect.token.label')}</span>
+              <input
+                value={clientToken}
+                onChange={(event) => setClientToken(event.target.value)}
+                placeholder={t('mobile.connect.token.placeholder')}
+                autoCapitalize="none"
+                autoCorrect="off"
+                className="h-12 w-full rounded-[16px] border border-border/70 bg-background px-3 text-[16px] text-foreground outline-none transition-colors placeholder:text-muted-foreground focus:border-primary focus:ring-2 focus:ring-primary/20"
+              />
+            </label>
+            {error ? <p className="typography-small text-[var(--status-error)]">{error}</p> : null}
+            <Button type="submit" size="lg" className="h-12 w-full" disabled={isConnecting}>
+              {isConnecting ? t('mobile.connect.connecting') : t('mobile.connect.connectButton')}
+            </Button>
+          </form>
+
+          <div className="grid grid-cols-2 gap-3">
+            <Button type="button" variant="outline" size="lg" className="h-12" onClick={() => setQrHintVisible((value) => !value)}>
+              <Icon name="scan-2" className="size-4" />
+              {t('mobile.connect.scanQr')}
+            </Button>
+            <Button type="button" variant="outline" size="lg" className="h-12" onClick={() => setConnections(loadMobileConnections())}>
+              <Icon name="refresh" className="size-4" />
+              {t('mobile.connect.refreshSaved')}
+            </Button>
+          </div>
+          {qrHintVisible ? (
+            <p className="rounded-[18px] border border-border/70 bg-surface-muted px-4 py-3 typography-small text-muted-foreground">
+              {t('mobile.connect.qrComingSoon')}
+            </p>
+          ) : null}
+
+          <section className="space-y-3">
+            <h2 className="typography-ui-label text-muted-foreground">{t('mobile.connect.saved.title')}</h2>
+            {connections.length > 0 ? (
+              <div className="overflow-hidden rounded-[22px] border border-border/70 bg-surface-elevated">
+                {connections.map((connection) => (
+                  <button
+                    key={connection.id}
+                    type="button"
+                    className="flex min-h-16 w-full items-center gap-3 border-b border-border/60 px-4 py-3 text-left last:border-b-0 hover:bg-interactive-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                    onClick={() => void connect(connection)}
+                  >
+                    <span className="flex size-10 shrink-0 items-center justify-center rounded-[14px] bg-interactive-hover text-foreground">
+                      <Icon name="server" className="size-5" />
+                    </span>
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate typography-ui-label text-foreground">{connection.label}</span>
+                      <span className="block truncate typography-small text-muted-foreground">{connection.url}</span>
+                    </span>
+                    <Icon name="arrow-right-s" className="size-5 text-muted-foreground" />
+                  </button>
+                ))}
+              </div>
+            ) : (
+              <p className="rounded-[22px] border border-dashed border-border/70 px-4 py-5 typography-small text-muted-foreground">
+                {t('mobile.connect.saved.empty')}
+              </p>
+            )}
+          </section>
+        </section>
+      </div>
+    </main>
+  );
 };
 
 type MobileUsageLimitRow = {
@@ -1089,6 +1305,7 @@ export function MobileApp({ apis }: MobileAppProps) {
   const refreshGitHubAuthStatus = useGitHubAuthStore((state) => state.refreshStatus);
   const setPlanModeEnabled = useFeatureFlagsStore((state) => state.setPlanModeEnabled);
   const projects = useProjectsStore((state) => state.projects);
+  const [connectionEpoch, setConnectionEpoch] = React.useState(0);
 
   React.useEffect(() => {
     registerRuntimeAPIs(apis);
@@ -1101,7 +1318,7 @@ export function MobileApp({ apis }: MobileAppProps) {
 
   React.useEffect(() => {
     void initializeApp();
-  }, [initializeApp]);
+  }, [connectionEpoch, initializeApp]);
 
   React.useEffect(() => {
     if (!isConnected) return;
@@ -1192,6 +1409,10 @@ export function MobileApp({ apis }: MobileAppProps) {
   useUpdatePolling();
   useWindowTitle();
   useRouter();
+
+  if (!isConnected) {
+    return <MobileConnectionWelcome onConnected={() => setConnectionEpoch((value) => value + 1)} />;
+  }
 
   return (
     <ErrorBoundary>
