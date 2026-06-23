@@ -62,11 +62,36 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
         self.window = window
         window.makeKeyAndVisible()
 
+        configureWebViewChrome()
+
         if let urlContext = connectionOptions.urlContexts.first {
             _ = ApplicationDelegateProxy.shared.application(UIApplication.shared, open: urlContext.url, options: [:])
         }
         if let userActivity = connectionOptions.userActivities.first {
             _ = ApplicationDelegateProxy.shared.application(UIApplication.shared, continue: userActivity) { _ in }
+        }
+    }
+
+    func sceneDidBecomeActive(_ scene: UIScene) {
+        // Re-assert in case the WebView wasn't ready at scene-connect time, or the
+        // effect was re-enabled while backgrounded.
+        configureWebViewChrome()
+    }
+
+    /// iOS 26 (Liquid Glass) automatically applies a "scroll edge effect" — a blur +
+    /// appearance-coloured dim — to the top/bottom of a scroll view beneath the system
+    /// bars. On the full-screen WKWebView that renders as a dark band behind the status
+    /// bar in Dark Mode (independent of the in-app theme). Hide it so the web content
+    /// (which paints its own themed background) is what shows under the status bar.
+    private func configureWebViewChrome() {
+        guard let bridge = window?.rootViewController as? CAPBridgeViewController,
+              let webView = bridge.webView else { return }
+        webView.isOpaque = false
+        webView.backgroundColor = .clear
+        webView.scrollView.backgroundColor = .clear
+        if #available(iOS 26.0, *) {
+            webView.scrollView.topEdgeEffect.isHidden = true
+            webView.scrollView.bottomEdgeEffect.isHidden = true
         }
     }
 

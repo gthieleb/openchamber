@@ -108,9 +108,28 @@ const useNativeMobileChrome = (): void => {
 
     void import('@capacitor/status-bar').then(async ({ StatusBar, Style }) => {
       if (disposed) return;
-      await StatusBar.setStyle({ style: Style.Default }).catch(() => undefined);
-      await StatusBar.setOverlaysWebView({ overlay: true }).catch(() => undefined);
-      await StatusBar.show().catch(() => undefined);
+      // Keep the status bar transparent over the WebView. A custom UIScene lifecycle
+      // (iOS 26) plus returning from background can silently drop the overlay state,
+      // letting an opaque status-bar background flash in at the top — so re-assert it
+      // on mount, once shortly after (startup race), and whenever the app re-activates.
+      const applyStatusBar = async () => {
+        await StatusBar.setStyle({ style: Style.Default }).catch(() => undefined);
+        await StatusBar.setOverlaysWebView({ overlay: true }).catch(() => undefined);
+        await StatusBar.show().catch(() => undefined);
+      };
+      await applyStatusBar();
+      const retry = window.setTimeout(() => void applyStatusBar(), 400);
+      cleanup.push(() => window.clearTimeout(retry));
+
+      const { App } = await import('@capacitor/app');
+      const stateHandle = await App.addListener('appStateChange', ({ isActive }) => {
+        if (isActive) void applyStatusBar();
+      });
+      if (disposed) {
+        void stateHandle.remove();
+        return;
+      }
+      cleanup.push(() => void stateHandle.remove());
     }).catch(() => undefined);
 
     void import('@capacitor/keyboard').then(async ({ Keyboard }) => {

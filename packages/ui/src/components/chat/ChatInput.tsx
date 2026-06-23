@@ -1107,8 +1107,8 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({ onOpenSettings, scrollTo
     }, [currentSessionId, currentDirectory, t]);
 
     const isDesktopExpanded = isExpandedInput && !isMobile;
-    // Slightly rounder composer on mobile (touch UI reads better with a softer corner).
-    const chatInputRadius = isMobile ? '1rem' : 'var(--radius-xl)';
+    // Rounder composer on mobile (touch UI reads better with a softer corner).
+    const chatInputRadius = isMobile ? '1.5rem' : 'var(--radius-xl)';
     const useCompactChatPlaceholder = isMobile || isNarrowComposer;
 
     React.useEffect(() => {
