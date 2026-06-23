@@ -1,66 +1,81 @@
-# APNs remote push — relay mode
+# APNs remote push — signed relay mode
 
 Native iOS background push (notifications even when the app is **suspended or killed**) is
-delivered via APNs through a **central relay**, so no user configures an Apple key.
+delivered via APNs through a **central relay**, so no user configures an Apple key. Each server
+signs its relay requests with an auto-generated keypair, and tokens are bound to the server that
+registered them — so a leaked device token alone can't be used to push.
 
 ## How it works
 
 1. The app registers its APNs device token with **its own server** (`POST /api/push/apns-token`,
    `useNativePushRegistration`). PWA/desktop never register — only the native Capacitor app.
-2. On a trigger (ready/error/question/permission), the server composes **generic, content-free**
-   text — model name + scenario only ("Opus 4.8 finished task" / "needs your input" / "hit an
-   error"), no session content — and, when a UI client is **not focused** and tokens exist, POSTs
-   `{ tokens, title, body, collapseId, env, data:{sessionId} }` to the relay
-   (`apns-runtime.js` → `sendViaRelay`).
-3. The **relay** (`openchamber-website/apps/api`, Cloudflare Worker, `POST /v1/push/send`) holds
+2. The server **binds the token on the relay**: it POSTs `{ token, publicKeyJwk, ts, sig }` to
+   `POST /v1/push/register-token`, signed with its auto-generated ECDSA P-256 key
+   (`getOrCreateRelayKeypair`, persisted in settings like the VAPID keys). The relay records
+   `token → serverId` where `serverId = SHA-256(publicKey)`.
+3. On a trigger (ready/error/question/permission), the server composes **generic, content-free**
+   text — a fixed scenario title ("Agent response is ready" / "Agent needs your input" / "Agent
+   needs permission" / "Agent hit an error") + the **session name** as the body, no model/project/
+   message content — and POSTs `{ tokens, title, body, env, data:{sessionId}, publicKeyJwk, ts,
+   sig }` to `POST /v1/push/send` (`apns-runtime.js` → `sendViaRelay`). It does **not** gate on UI
+   visibility (see below).
+4. The **relay** (`openchamber-website/apps/api`, Cloudflare Worker) verifies the signature +
+   `ts` freshness, derives `serverId`, and only delivers to tokens bound to that server. It holds
    the single project APNs `.p8` key, signs an ES256 JWT with `crypto.subtle`, and sends each
-   token to APNs over HTTP/2. It returns per-token results; the server drops tokens flagged
-   `drop` (410 / BadDeviceToken). Generic text means nothing sensitive crosses Cloudflare.
-4. Tapping a push deep-links to its session via the forwarded `sessionId`.
+   token to APNs over HTTP/2, returning per-token results; the server drops tokens flagged `drop`
+   (410 / BadDeviceToken). The relay stores no secret — only `token → serverId` hashes.
+5. Tapping a push deep-links to its session via the forwarded `sessionId`.
 
-Cloudflare is touched **only** when: native app + notifications on + app backgrounded + a
-registered token exists. APNs is the native app's **only** notification channel — local
-notifications were removed because a WKWebView can't reliably tell foreground from
-background (`document.hasFocus()` is unreliable), so they leaked while the app was open.
-Foreground suppression is enforced server-side via the visibility gate, with the app
-reporting visibility authoritatively from Capacitor `App.appStateChange`.
+## Foreground suppression
+
+APNs is **not** gated on UI visibility. A backgrounded WKWebView can't reliably report "hidden"
+before iOS suspends it, so a server-side visibility gate dropped background push for short
+responses. Instead the server always sends, and **iOS** suppresses the foreground banner
+(`PushNotifications.presentationOptions: []` in `capacitor.config`) — so there is no notification
+while the app is active, with no race. APNs is the native app's **only** channel; local
+notifications were removed (a WKWebView can't tell foreground from background — `document.hasFocus()`
+is unreliable — so they leaked while the app was open). Cloudflare is touched only when a native
+app with notifications on has a registered token and a trigger fires.
 
 ## Modes
 
 - **Relay (default):** server has no Apple key; `OPENCHAMBER_PUSH_RELAY_URL` defaults to
-  `https://api.openchamber.dev/v1/push/send`.
+  `https://api.openchamber.dev/v1/push/send` (register URL is derived as `…/register-token`).
 - **Direct (fallback):** set `OPENCHAMBER_PUSH_RELAY_DISABLED=true` + `OPENCHAMBER_APNS_KEY_ID/
-  TEAM_ID/P8` to sign+send from the server itself (HTTP/2 + ES256 JWT).
+  TEAM_ID/P8` to sign+send from the server itself (HTTP/2 + ES256 JWT); no relay binding needed.
 
 ## Config
 
 Server (`apns-runtime.js`):
-- `OPENCHAMBER_PUSH_RELAY_URL` (default the public relay), `OPENCHAMBER_PUSH_RELAY_TOKEN` (soft
-  bearer; must match the relay's `PUSH_RELAY_TOKEN` if set), `OPENCHAMBER_APNS_ENVIRONMENT`
-  (`sandbox` default / `production`).
+- `OPENCHAMBER_PUSH_RELAY_URL` (default the public relay), `OPENCHAMBER_APNS_ENVIRONMENT`
+  (`sandbox` default / `production`). The signing keypair is auto-generated — nothing to set.
 - Direct fallback: `OPENCHAMBER_APNS_KEY_ID`, `OPENCHAMBER_APNS_TEAM_ID`, `OPENCHAMBER_APNS_P8`
   (or `_P8_PATH`), `OPENCHAMBER_APNS_BUNDLE_ID`, `OPENCHAMBER_PUSH_RELAY_DISABLED=true`.
 
 Relay (Cloudflare Worker secrets via `wrangler secret put` / GitHub Actions): `APNS_P8`,
-`APNS_KEY_ID`, `APNS_TEAM_ID`, optional `APNS_BUNDLE_ID` / `APNS_DEFAULT_ENV` / `PUSH_RELAY_TOKEN`.
+`APNS_KEY_ID`, `APNS_TEAM_ID`, optional `APNS_BUNDLE_ID` / `APNS_DEFAULT_ENV`. The `push_tokens`
+binding table is created by `migrations/0002_push_tokens.sql` (applied on deploy).
 
 ## Apple setup (one-time)
 
 1. Apple **Keys** (not Certificates) → create an **APNs Auth Key** (`.p8`) → Key ID + Team ID;
    enable **Push Notifications** on App ID `com.openchamber.app`.
 2. In the **openchamber-website** repo → Actions secrets: `APNS_P8` (PEM), `APNS_KEY_ID`,
-   `APNS_TEAM_ID`, `PUSH_RELAY_TOKEN`. Push to `main` → relay deploys + secrets sync.
+   `APNS_TEAM_ID`. Push to `main` → relay deploys, secrets sync, D1 migrations apply.
 3. Xcode: confirm the Push Notifications capability; Clean Build Folder; run on device.
 
-## Security posture (v1)
+## Security posture
 
-The real capability is *possessing a device token* (secret, per-install, bundle-scoped) — an
-attacker can't obtain others' tokens. `PUSH_RELAY_TOKEN` + Cloudflare rate limiting are soft
-defense-in-depth. Per-server signed identity is deferred to the future full encrypted relay,
-which this design feeds into.
+- The device token is a per-install secret, but no longer the *only* defence: every relay request
+  is signed by the server's private key, and the relay only delivers to a token from its bound
+  `serverId`. A leaked token alone is useless — an attacker has neither the private key nor a
+  matching binding.
+- `serverId` self-certifies (`SHA-256(publicKey)`), so the relay holds no secret; a D1 leak
+  exposes only `token → serverId` hashes. The signed `ts` (±5 min window) blocks replay.
+- Residual: trust-on-first-bind (whoever registers a token first owns it) — acceptable, since
+  registering already requires possessing the token. Cloudflare rate limiting is defence-in-depth.
 
 ## Android (FCM) note
 
 The Android equivalent is **FCM** (not implemented): the same relay would forward to FCM with a
-server key, and the client would register an FCM token (same store/routes). Local notifications
-already cover Android.
+server key, and the client would register an FCM token (same store/routes + signing).

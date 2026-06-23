@@ -36,11 +36,68 @@ export const createApnsRuntime = (deps) => {
     http2,
     APNS_TOKENS_FILE_PATH,
     readSettingsFromDiskMigrated,
+    writeSettingsToDisk,
   } = deps;
 
   let persistLock = Promise.resolve();
   let cachedJwt = null; // { token, issuedAtMs, keyId }
+  let cachedRelayKey = null; // { privateKey, publicJwk }
   let warnedUnconfigured = false;
+
+  // ---------------------------------------------------------------------------
+  // Per-server relay signing identity (ECDSA P-256). Auto-generated + persisted in settings
+  // (mirrors getOrCreateVapidKeys). The relay derives serverId = SHA-256(publicKey), verifies
+  // each request's signature, and only delivers to tokens this server registered — so a leaked
+  // device token alone can't be used to push. Zero-config: the keypair generates on first use.
+  // ---------------------------------------------------------------------------
+
+  const getOrCreateRelayKeypair = async () => {
+    if (cachedRelayKey) return cachedRelayKey;
+    const settings = await readSettingsFromDiskMigrated();
+    const existing = settings?.relaySigningKey;
+    if (existing && existing.privateJwk && existing.publicJwk) {
+      cachedRelayKey = {
+        privateKey: crypto.createPrivateKey({ key: existing.privateJwk, format: 'jwk' }),
+        publicJwk: existing.publicJwk,
+      };
+      return cachedRelayKey;
+    }
+    const { privateKey, publicKey } = crypto.generateKeyPairSync('ec', { namedCurve: 'P-256' });
+    const privateJwk = privateKey.export({ format: 'jwk' });
+    const publicJwk = publicKey.export({ format: 'jwk' });
+    await writeSettingsToDisk({ ...settings, relaySigningKey: { privateJwk, publicJwk } });
+    cachedRelayKey = { privateKey, publicJwk };
+    return cachedRelayKey;
+  };
+
+  const signRelayMessage = (privateKey, message) =>
+    crypto.sign('SHA256', Buffer.from(message), { key: privateKey, dsaEncoding: 'ieee-p1363' }).toString('base64url');
+
+  // Trim to the 4 fields the relay's schema accepts (and that feed the serverId hash).
+  const relayPublicJwk = (publicJwk) => ({
+    kty: publicJwk.kty,
+    crv: publicJwk.crv,
+    x: publicJwk.x,
+    y: publicJwk.y,
+  });
+
+  const registerTokenWithRelay = async (token) => {
+    const relay = resolveRelayConfig();
+    if (!relay) return; // direct mode — no relay binding needed
+    try {
+      const { privateKey, publicJwk } = await getOrCreateRelayKeypair();
+      const ts = Date.now();
+      const sig = signRelayMessage(privateKey, `${ts}.${token}`);
+      const res = await fetch(relay.registerUrl, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ token, publicKeyJwk: relayPublicJwk(publicJwk), ts, sig }),
+      });
+      if (!res.ok) console.warn(`[APNs relay] register-token failed status=${res.status}`);
+    } catch (error) {
+      console.warn('[APNs relay] register-token request failed:', error?.message ?? error);
+    }
+  };
 
   // ---------------------------------------------------------------------------
   // Token persistence (same shape + write-lock pattern as push-runtime.js)
@@ -117,6 +174,12 @@ export const createApnsRuntime = (deps) => {
       tokensBySession[uiSessionToken] = filtered.slice(0, MAX_TOKENS_PER_SESSION);
       return { version: APNS_TOKENS_VERSION, tokensBySession };
     });
+
+    // (Re)bind this token to our server on the relay so only we can push to it. The device
+    // re-sends its token on each launch; this is an idempotent upsert relay-side, and binding
+    // every time (not just for new tokens) keeps existing tokens bound after a relay/server
+    // upgrade rather than silently going unbound.
+    await registerTokenWithRelay(token);
   };
 
   const removeApnsToken = async (uiSessionToken, deviceToken) => {
@@ -296,9 +359,10 @@ export const createApnsRuntime = (deps) => {
   // is the fallback for self-hosters who set OPENCHAMBER_APNS_* and disable the relay.
   const resolveRelayConfig = () => {
     if (trimmedEnv('OPENCHAMBER_PUSH_RELAY_DISABLED') === 'true') return null;
+    const url = trimmedEnv('OPENCHAMBER_PUSH_RELAY_URL') || DEFAULT_RELAY_URL;
     return {
-      url: trimmedEnv('OPENCHAMBER_PUSH_RELAY_URL') || DEFAULT_RELAY_URL,
-      token: trimmedEnv('OPENCHAMBER_PUSH_RELAY_TOKEN'),
+      url,
+      registerUrl: url.replace(/\/send$/, '/register-token'),
       environment:
         (trimmedEnv('OPENCHAMBER_APNS_ENVIRONMENT') || 'sandbox').toLowerCase() === 'production'
           ? 'production'
@@ -307,21 +371,27 @@ export const createApnsRuntime = (deps) => {
   };
 
   const sendViaRelay = async (deviceTokens, payload, relay) => {
+    const tokens = deviceTokens.slice(0, 100);
+    const title = typeof payload?.title === 'string' && payload.title.length > 0 ? payload.title : 'OpenChamber';
+    const { privateKey, publicJwk } = await getOrCreateRelayKeypair();
+    const ts = Date.now();
+    // Sign over the same canonical form the relay verifies: ts.sortedTokens.title.
+    const sig = signRelayMessage(privateKey, `${ts}.${[...tokens].sort().join(',')}.${title}`);
     const requestBody = JSON.stringify({
-      tokens: deviceTokens.slice(0, 100),
-      title: typeof payload?.title === 'string' && payload.title.length > 0 ? payload.title : 'OpenChamber',
+      tokens,
+      title,
       body: typeof payload?.body === 'string' ? payload.body : '',
       collapseId: typeof payload?.tag === 'string' ? payload.tag.slice(0, 64) : undefined,
       env: relay.environment,
       data: payload?.data && typeof payload.data === 'object' ? payload.data : undefined,
+      publicKeyJwk: relayPublicJwk(publicJwk),
+      ts,
+      sig,
     });
     try {
       const res = await fetch(relay.url, {
         method: 'POST',
-        headers: {
-          'content-type': 'application/json',
-          ...(relay.token ? { authorization: `Bearer ${relay.token}` } : {}),
-        },
+        headers: { 'content-type': 'application/json' },
         body: requestBody,
       });
       if (!res.ok) {
