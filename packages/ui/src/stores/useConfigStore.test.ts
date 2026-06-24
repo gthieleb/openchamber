@@ -845,4 +845,80 @@ describe('useConfigStore provider persistence', () => {
     expect(state.currentProviderId).toBe('manual');
     expect(state.selectionSource).toBe('manual');
   });
+
+  test('BUG REPRODUCTION: selectionSource not in partialize + applyDefaultModelAgentSelection resets to auto, causing model to fall back to Big Pickle', async () => {
+    // Root cause 1: `selectionSource` is missing from the `partialize` function
+    // (lines 3283-3306 in useConfigStore.ts). The top-level `selectionSource`
+    // field is never written to localStorage, relying on indirect restoration
+    // via hydrateActiveDirectorySnapshot reading from directoryScoped.
+    //
+    // Root cause 2: `applyDefaultModelAgentSelection()` (called on every
+    // new session draft, including the first one after app restart) always
+    // sets `selectionSource: "auto"` (lines 2577/2582) and uses
+    // `resolveDefaultAgentModelSelection()` which does NOT use
+    // `resolveSelectionWithManualGuard`. So even if the model was preserved
+    // through loadAgents, it gets overwritten when the new session is created.
+    //
+    // The comment at session-ui-store.ts:681 says:
+    //   "a fresh draft must start from defaults, not inherit the previous
+    //    session's selection"
+    // But on app restart there is no "previous session" — the user expects
+    // the app to remember their last selected model.
+
+    // Step 1: User selects a model manually (simulates setProvider/setModel).
+    useConfigStore.setState({
+      activeDirectoryKey: DIRECTORY,
+      providers: [provider('anthropic'), provider('opencode', 'big-pickle')],
+      agents: [testAgent('build')],
+      currentProviderId: 'anthropic',
+      currentModelId: 'anthropic-model',
+      selectionSource: 'manual',
+      selectedProviderId: 'anthropic',
+      defaultProviders: {},
+      directoryScoped: {
+        [DIRECTORY]: {
+          providers: [provider('anthropic'), provider('opencode', 'big-pickle')],
+          agents: [testAgent('build')],
+          currentProviderId: 'anthropic',
+          currentModelId: 'anthropic-model',
+          currentAgentName: 'build',
+          selectedProviderId: 'anthropic',
+          agentModelSelections: {},
+          defaultProviders: {},
+          selectionSource: 'manual',
+        },
+      },
+    });
+
+    // Step 2: Verify that top-level selectionSource is NOT in the persisted state.
+    const persistedRaw = storage.get(STORAGE_KEY);
+    expect(persistedRaw).not.toBeNull();
+    const persisted = JSON.parse(persistedRaw!);
+    expect(persisted.state.selectionSource).toBe(undefined);
+    expect(persisted.state.currentProviderId).toBe('anthropic');
+
+    // Step 3: The critical bug — applyDefaultModelAgentSelection is called
+    // when opening a new session draft (session-ui-store.ts:684).
+    // It ALWAYS sets selectionSource to "auto" and resolves from the cascade,
+    // discarding the user's manual selection.
+    const providerHasOpencode = useConfigStore.getState().providers.some(
+      p => p.id === 'opencode',
+    );
+    useConfigStore.getState().applyDefaultModelAgentSelection();
+
+    const afterApply = useConfigStore.getState();
+    // selectionSource is reset to "auto", discarding the user's manual selection
+    expect(afterApply.selectionSource).toBe('auto');
+    // BUG: The model falls back to the cascade default, not the user's
+    // previous manual choice. The cascade is:
+    //   settingsDefaultModel → agent's pinned model → opencodeDefaultModel
+    //   → opencode/big-pickle → first provider's first model
+    if (providerHasOpencode && afterApply.currentProviderId === 'opencode') {
+      expect(afterApply.currentModelId).toBe('big-pickle');
+    } else {
+      // Falls to first provider's first model
+      expect(afterApply.currentProviderId).toBe('anthropic');
+      expect(afterApply.currentModelId).toBe('anthropic-model');
+    }
+  });
 });
