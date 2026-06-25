@@ -86,30 +86,6 @@ export function mergeOptimisticPage(page: MessagePage, items: OptimisticItem[]) 
   }
 }
 
-/** Apply optimistic add to a mutable draft (for immer/produce) */
-export function applyOptimisticAdd(draft: OptimisticStore, input: OptimisticAddInput) {
-  const messages = draft.message[input.sessionID]
-  if (messages) {
-    const result = Binary.search(messages, input.message.id, (m) => m.id)
-    if (!result.found) {
-      messages.splice(result.index, 0, input.message)
-    }
-  } else {
-    draft.message[input.sessionID] = [input.message]
-  }
-  draft.part[input.message.id] = sortParts(input.parts)
-}
-
-/** Apply optimistic remove to a mutable draft (for immer/produce) */
-export function applyOptimisticRemove(draft: OptimisticStore, input: OptimisticRemoveInput) {
-  const messages = draft.message[input.sessionID]
-  if (messages) {
-    const result = Binary.search(messages, input.messageID, (m) => m.id)
-    if (result.found) messages.splice(result.index, 1)
-  }
-  delete draft.part[input.messageID]
-}
-
 /** Merge two sorted message arrays by id, deduplicating.
  *  Preserves references from `a` for items that already exist — avoids
  *  unnecessary React re-renders when prepending older history. */

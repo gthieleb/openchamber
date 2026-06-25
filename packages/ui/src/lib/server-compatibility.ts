@@ -1,5 +1,3 @@
-import { runtimeFetch } from './runtime-fetch';
-
 export const OPENCHAMBER_CLIENT_API_VERSION = 1;
 
 export const REQUIRED_SERVER_CAPABILITIES = [
@@ -121,39 +119,3 @@ export const evaluateServerCompatibility = (
   };
 };
 
-export const checkServerCompatibility = async (): Promise<ServerCompatibilityResult> => {
-  let response: Response;
-  try {
-    response = await runtimeFetch('/api/version', {
-      method: 'GET',
-      headers: { Accept: 'application/json' },
-    });
-  } catch (error) {
-    return {
-      status: 'unreachable',
-      openchamberVersion: null,
-      runtime: null,
-      apiVersion: null,
-      minClientApiVersion: null,
-      missingCapabilities: [],
-      requiredCapabilities: [...REQUIRED_SERVER_CAPABILITIES],
-      message: error instanceof Error ? error.message : 'Server is unreachable.',
-    };
-  }
-
-  if (response.status === 401 || response.status === 403) {
-    return {
-      status: 'auth-required',
-      openchamberVersion: null,
-      runtime: null,
-      apiVersion: null,
-      minClientApiVersion: null,
-      missingCapabilities: [],
-      requiredCapabilities: [...REQUIRED_SERVER_CAPABILITIES],
-      message: 'Server requires authentication.',
-    };
-  }
-
-  const payload = await response.json().catch(() => null) as ServerCompatibilityPayload | null;
-  return evaluateServerCompatibility(payload);
-};

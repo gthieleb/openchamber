@@ -58,15 +58,6 @@ export const formatEffortLabel = (variant?: string) => {
 
 export const DEFAULT_EFFORT_KEY = 'default';
 
-export const serializeEffortVariant = (variant?: string) => {
-    const trimmed = typeof variant === 'string' ? variant.trim() : '';
-    return trimmed.length > 0 ? trimmed : DEFAULT_EFFORT_KEY;
-};
-
-export const parseEffortVariant = (variant: string) => {
-    return variant === DEFAULT_EFFORT_KEY ? undefined : variant;
-};
-
 const EFFORT_RANKS: Record<string, number> = {
     max: 6,
     maximum: 6,
@@ -89,24 +80,4 @@ export const getEffortRank = (variant?: string) => {
     }
     const numeric = Number.parseFloat(normalized);
     return Number.isFinite(numeric) ? numeric : 0;
-};
-
-export const getQuickEffortOptions = (variants: string[]) => {
-    const options = new Map<string, string | undefined>();
-    options.set('default', undefined);
-    for (const variant of variants) {
-        options.set(variant, variant);
-    }
-
-    const ordered = Array.from(options.values()).sort((a, b) => getEffortRank(b) - getEffortRank(a));
-    if (ordered.length <= 4) {
-        return ordered;
-    }
-
-    const top = ordered.slice(0, 3);
-    const lowest = ordered[ordered.length - 1];
-    if (top.some((item) => item === lowest)) {
-        return top;
-    }
-    return [...top, lowest];
 };

@@ -47,10 +47,6 @@ export function getSyncChildStores(): ChildStoreManager {
   return _childStores
 }
 
-export function getSyncDirectory(): string {
-  return _directory
-}
-
 /** Read current directory's child store state. Returns undefined if not bootstrapped. */
 export function getDirectoryState(directory?: string): State | undefined {
   const stores = _childStores
@@ -125,9 +121,4 @@ export function getSyncSessionStatus(sessionId: string, directory?: string) {
 /** Read permissions for a session from current directory's child store */
 export function getSyncPermissions(sessionId: string, directory?: string) {
   return getDirectoryState(directory)?.permission[sessionId] ?? []
-}
-
-/** Read questions for a session from current directory's child store */
-export function getSyncQuestions(sessionId: string, directory?: string) {
-  return getDirectoryState(directory)?.question[sessionId] ?? []
 }

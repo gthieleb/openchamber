@@ -67,13 +67,3 @@ export const filterVisibleParts = (parts: Part[], options: VisibleFilterOptions 
         return !isPatchPart;
     });
 };
-
-type PartWithTime = Part & { time?: { start?: number; end?: number } };
-
-export const isFinalizedTextPart = (part: Part): boolean => {
-    if (part.type !== 'text') {
-        return false;
-    }
-    const time = (part as PartWithTime).time;
-    return Boolean(time && typeof time.end !== 'undefined');
-};

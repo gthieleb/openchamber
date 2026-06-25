@@ -12,9 +12,6 @@ export const MULTIRUN_EXECUTION_FORK_PROMPT_META_TEXT =
     "Proceed with actions right away based on your understanding of the task. " +
     "Here is the content of the message: ";
 
-export const isExecutionForkMetaText = (text: string | null | undefined): boolean =>
-    typeof text === 'string' && text.trim() === EXECUTION_FORK_META_TEXT.trim();
-
 // Default, user-editable instructions prefilled in the "Start new session from
 // this answer" dialog. Mirrors the previous fixed fork instruction so existing
 // behavior is preserved unless the user edits it.
