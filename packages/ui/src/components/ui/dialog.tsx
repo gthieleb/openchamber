@@ -41,15 +41,6 @@ function DialogPortal({
   return <BaseDialog.Portal {...props} />
 }
 
-export function DialogClose({
-  asChild,
-  children,
-  ...props
-}: React.ComponentProps<typeof BaseDialog.Close> & AsChildProps) {
-  const r = renderFromAsChild(asChild, children);
-  return <BaseDialog.Close data-slot="dialog-close" {...props} {...r} />
-}
-
 const DialogOverlay = React.forwardRef<
   HTMLDivElement,
   React.ComponentPropsWithoutRef<typeof BaseDialog.Backdrop>

@@ -48,13 +48,6 @@ function DropdownMenu({
   )
 }
 
-export function DropdownMenuPortal({
-  ...props
-}: React.ComponentProps<typeof BaseMenu.Portal>) {
-  const portalContext = React.useContext(DropdownPortalContext);
-  return <BaseMenu.Portal {...props} container={portalContext?.portalContainer || props.container} />
-}
-
 function DropdownMenuTrigger({
   asChild,
   children,
@@ -147,12 +140,6 @@ function DropdownMenuContent({
   )
 }
 
-export function DropdownMenuGroup({
-  ...props
-}: React.ComponentProps<typeof BaseMenu.Group>) {
-  return <BaseMenu.Group data-slot="dropdown-menu-group" {...props} />
-}
-
 function DropdownMenuItem({
   className,
   inset,
@@ -185,32 +172,6 @@ function DropdownMenuItem({
       onClick={handleClick}
       {...r}
     />
-  )
-}
-
-export function DropdownMenuCheckboxItem({
-  className,
-  children,
-  checked,
-  ...props
-}: React.ComponentProps<typeof BaseMenu.CheckboxItem>) {
-  return (
-    <BaseMenu.CheckboxItem
-      data-slot="dropdown-menu-checkbox-item"
-      className={cn(
-        "data-[highlighted]:bg-interactive-hover hover:bg-interactive-hover data-[checked]:bg-interactive-selection data-[checked]:text-interactive-selection-foreground relative flex cursor-pointer items-center gap-2 rounded-lg py-1 px-2 typography-ui-label outline-hidden select-none data-[disabled]:pointer-events-none data-[disabled]:opacity-50 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-3.5",
-        className
-      )}
-      checked={checked}
-      {...props}
-    >
-      <span className="pointer-events-none absolute right-2 flex size-3.5 items-center justify-center">
-        <BaseMenu.CheckboxItemIndicator>
-          <Icon name="check" className="size-3" />
-        </BaseMenu.CheckboxItemIndicator>
-      </span>
-      {children}
-    </BaseMenu.CheckboxItem>
   )
 }
 
@@ -272,22 +233,6 @@ function DropdownMenuSeparator({
     <BaseMenu.Separator
       data-slot="dropdown-menu-separator"
       className={cn(dropdownMenuSeparatorClass, className)}
-      {...props}
-    />
-  )
-}
-
-export function DropdownMenuShortcut({
-  className,
-  ...props
-}: React.ComponentProps<"span">) {
-  return (
-    <span
-      data-slot="dropdown-menu-shortcut"
-      className={cn(
-        "text-muted-foreground ml-auto typography-meta tracking-widest",
-        className
-      )}
       {...props}
     />
   )
