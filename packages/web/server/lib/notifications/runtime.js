@@ -15,6 +15,33 @@ export const createNotificationTriggerRuntime = (deps) => {
     getOpenCodeAuthHeaders,
   } = deps;
 
+  // App-icon badge for native push: the set of DISTINCT collapse-ids (the push
+  // `tag`, e.g. `ready-<sessionId>` / `permission-<requestKey>`) we've sent since
+  // the app was last foregrounded. The badge is the absolute APNs `aps.badge`.
+  //
+  // We key by `tag`, not sessionId, because the tag IS the banner identity: iOS
+  // uses it as `apns-collapse-id`, so same-tag pushes REPLACE one banner while
+  // different tags are distinct banners. One session can raise several banners
+  // (ready + question + permission are different tags), so counting sessionIds
+  // both over- and under-counts the lock-screen stack; counting tags mirrors it.
+  //
+  // We deliberately do NOT derive this from the live attention snapshot
+  // (needsAttention/isViewed): that machinery is for in-app indicators on
+  // connected clients — a backgrounded client stays "viewing", and needsAttention
+  // is set by a separate session.status event that races the push trigger. The
+  // set is cleared when a UI client reports visible (`clearPendingPushBadge`),
+  // the same moment the device zeroes its icon badge on becomeActive.
+  const pendingPushTags = new Set();
+  const clearPendingPushBadge = () => {
+    pendingPushTags.clear();
+  };
+  const trackPushAndCountBadge = (tag) => {
+    if (typeof tag === 'string' && tag.length > 0) {
+      pendingPushTags.add(tag);
+    }
+    return pendingPushTags.size;
+  };
+
   // Generic notification for native push (per the mobile design): a fixed, scenario-based
   // title + the session name as the body. No model/project/message content crosses the relay.
   const APNS_TITLE_BY_TYPE = {
@@ -32,6 +59,7 @@ export const createNotificationTriggerRuntime = (deps) => {
     return {
       title: APNS_TITLE_BY_TYPE[data.type] || 'Agent update',
       body: sessionName,
+      badge: trackPushAndCountBadge(typeof payload?.tag === 'string' ? payload.tag : undefined),
       tag: payload?.tag,
       // sessionId is forwarded so a tapped push can deep-link; it is an opaque id, not content.
       data: typeof data.sessionId === 'string' ? { sessionId: data.sessionId } : undefined,
@@ -610,5 +638,6 @@ export const createNotificationTriggerRuntime = (deps) => {
     maybeSendPushForTrigger,
     setAutoAcceptSession,
     setGetIsWindowFocused,
+    clearPendingPushBadge,
   };
 };

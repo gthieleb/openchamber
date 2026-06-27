@@ -16,9 +16,9 @@ registered them — so a leaked device token alone can't be used to push.
 3. On a trigger (ready/error/question/permission), the server composes **generic, content-free**
    text — a fixed scenario title ("Agent response is ready" / "Agent needs your input" / "Agent
    needs permission" / "Agent hit an error") + the **session name** as the body, no model/project/
-   message content — and POSTs `{ tokens, title, body, env, data:{sessionId}, publicKeyJwk, ts,
-   sig }` to `POST /v1/push/send` (`apns-runtime.js` → `sendViaRelay`). It does **not** gate on UI
-   visibility (see below).
+   message content — plus a **`badge`** count (see below) — and POSTs `{ tokens, title, body,
+   badge, env, data:{sessionId}, publicKeyJwk, ts, sig }` to `POST /v1/push/send`
+   (`apns-runtime.js` → `sendViaRelay`). It does **not** gate on UI visibility (see below).
 4. The **relay** (`openchamber-website/apps/api`, Cloudflare Worker) verifies the signature +
    `ts` freshness, derives `serverId`, and only delivers to tokens bound to that server. It holds
    the single project APNs `.p8` key, signs an ES256 JWT with `crypto.subtle`, and sends each
@@ -36,6 +36,34 @@ while the app is active, with no race. APNs is the native app's **only** channel
 notifications were removed (a WKWebView can't tell foreground from background — `document.hasFocus()`
 is unreliable — so they leaked while the app was open). Cloudflare is touched only when a native
 app with notifications on has a registered token and a trigger fires.
+
+## App-icon badge
+
+Each push carries an **absolute** `aps.badge` = the number of **distinct collapse-ids (`tag`)
+pushed since the app was last foregrounded**. It mirrors the lock-screen banner stack.
+
+The count is a `Set<tag>` (`pendingPushTags`) in the trigger runtime (`runtime.js`):
+`toApnsGenericPayload` adds the push `tag` and returns the set size as the badge. We key by **`tag`,
+not sessionId**, because the tag *is* the banner identity — iOS uses it as `apns-collapse-id`, so
+same-tag pushes replace one banner while different tags are distinct banners. One session can raise
+several banners (`ready-<id>`, `question-<id>`, `permission-<requestKey>` are different tags), so
+counting sessionIds both over- and under-counts the stack; counting tags matches it.
+
+It is deliberately **not** derived from the live attention snapshot (`needsAttention`/`isViewed`):
+that machinery drives in-app indicators on *connected* clients, where a backgrounded client stays
+"viewing" and `needsAttention` is set by a separate `session.status` event that races the push
+trigger. The set self-clears via `clearPendingPushBadge` on any signal that the user is engaging
+with the app: the visibility beacon (`updateUiVisibility` wrapper, `visible:true`), **plus** opening
+a session (`POST /api/sessions/:id/view`) and sending a message (`POST /api/sessions/:id/
+message-sent`). The latter two need no auth and fire reliably on the native app when it foregrounds,
+so they are the dependable reset — the visibility beacon alone proved unreliable in WKWebView. This
+mirrors the device zeroing its icon badge on `sceneDidBecomeActive` (`AppDelegate.swift`), keeping
+server and device in sync.
+
+The value flows `runtime.js` (`toApnsGenericPayload`) → `apns-runtime.js` (`sendViaRelay` body /
+direct-mode `aps.badge`) → relay (`pushSendSchema.badge` → `aps.badge`). It is **not** signed (like
+`body`/`data`); the relay still only delivers to bound tokens. The set is server-global, so every
+device token of a server sees the same badge.
 
 ## Modes
 

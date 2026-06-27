@@ -103,7 +103,7 @@ describe('apns runtime relay mode (default)', () => {
 
     fetchMock.mockClear();
     await runtime.sendApnsToAllUiSessions(
-      { title: 'Agent response is ready', body: 'My session', tag: 'ready-x', data: { sessionId: 'sess1' } },
+      { title: 'Agent response is ready', body: 'My session', badge: 3, tag: 'ready-x', data: { sessionId: 'sess1' } },
       {},
     );
 
@@ -114,6 +114,7 @@ describe('apns runtime relay mode (default)', () => {
     expect(new Set(sent.tokens)).toEqual(new Set(['tokenA', 'tokenDead']));
     expect(sent.title).toBe('Agent response is ready');
     expect(sent.body).toBe('My session');
+    expect(sent.badge).toBe(3);
     expect(sent.data).toEqual({ sessionId: 'sess1' });
     expect(sent.publicKeyJwk).toMatchObject({ kty: 'EC', crv: 'P-256' });
     const sendMessage = `${sent.ts}.${[...sent.tokens].sort().join(',')}.${sent.title}`;

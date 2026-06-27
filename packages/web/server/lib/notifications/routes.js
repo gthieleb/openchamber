@@ -38,6 +38,7 @@ export const registerNotificationRoutes = (app, dependencies) => {
     addOrUpdateApnsToken,
     removeApnsToken,
     updateUiVisibility,
+    clearPendingPushBadge,
     isUiVisible,
     getUiNotificationClients,
     writeSseEvent,
@@ -346,6 +347,10 @@ export const registerNotificationRoutes = (app, dependencies) => {
     const clientId = req.headers['x-client-id'] || req.ip || 'anonymous';
 
     markSessionViewed(sessionId, clientId);
+    // The user is engaging with the app, so the native push badge no longer
+    // applies — reset it here too (not only on the visibility beacon), since
+    // opening the app reliably marks the opened session viewed.
+    if (typeof clearPendingPushBadge === 'function') clearPendingPushBadge();
 
     return res.json({
       success: true,
@@ -371,6 +376,9 @@ export const registerNotificationRoutes = (app, dependencies) => {
     const sessionId = req.params.id;
 
     markUserMessageSent(sessionId);
+    // Sending a message means the user is active in the app; reset the native
+    // push badge so it counts only notifications since this engagement.
+    if (typeof clearPendingPushBadge === 'function') clearPendingPushBadge();
 
     return res.json({
       success: true,

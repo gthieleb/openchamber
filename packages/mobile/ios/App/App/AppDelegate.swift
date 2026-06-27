@@ -1,5 +1,6 @@
 import UIKit
 import Capacitor
+import UserNotifications
 
 @UIApplicationMain
 class AppDelegate: UIResponder, UIApplicationDelegate {
@@ -88,6 +89,15 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
         // Re-assert in case the WebView wasn't ready at scene-connect time, or the
         // effect was re-enabled while backgrounded.
         configureWebViewChrome()
+
+        // Clear the app-icon badge whenever the app becomes active. The server sends
+        // an absolute badge count (sessions needing attention) on each push; once the
+        // user is looking at the app, the in-app indicators take over, so reset to 0.
+        if #available(iOS 17.0, *) {
+            UNUserNotificationCenter.current().setBadgeCount(0)
+        } else {
+            UIApplication.shared.applicationIconBadgeNumber = 0
+        }
     }
 
     /// iOS 26 (Liquid Glass) automatically applies a "scroll edge effect" — a blur +

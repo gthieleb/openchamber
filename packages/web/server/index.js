@@ -374,7 +374,14 @@ const getOrCreateVapidKeys = (...args) => pushRuntime.getOrCreateVapidKeys(...ar
 const addOrUpdatePushSubscription = (...args) => pushRuntime.addOrUpdatePushSubscription(...args);
 const removePushSubscription = (...args) => pushRuntime.removePushSubscription(...args);
 const sendPushToAllUiSessions = (...args) => pushRuntime.sendPushToAllUiSessions(...args);
-const updateUiVisibility = (...args) => pushRuntime.updateUiVisibility(...args);
+// Set once the notification trigger runtime exists (declared later). When a UI
+// client reports it became visible, reset the native push badge set — the same
+// moment the device zeroes its icon badge on becomeActive, keeping them in sync.
+let clearPendingPushBadge = () => {};
+const updateUiVisibility = (token, visible) => {
+  if (visible === true) clearPendingPushBadge();
+  return pushRuntime.updateUiVisibility(token, visible);
+};
 const isAnyUiVisible = (...args) => pushRuntime.isAnyUiVisible(...args);
 const isUiVisible = (...args) => pushRuntime.isUiVisible(...args);
 const ensurePushInitialized = (...args) => pushRuntime.ensurePushInitialized(...args);
@@ -694,6 +701,7 @@ const notificationTriggerRuntime = createNotificationTriggerRuntime({
 
 const maybeSendPushForTrigger = (...args) => notificationTriggerRuntime.maybeSendPushForTrigger(...args);
 const setAutoAcceptSession = (...args) => notificationTriggerRuntime.setAutoAcceptSession(...args);
+clearPendingPushBadge = () => notificationTriggerRuntime.clearPendingPushBadge();
 
 const globalMessageStreamHub = createGlobalMessageStreamHub({
   buildOpenCodeUrl,
@@ -1210,6 +1218,7 @@ async function main(options = {}) {
     addOrUpdateApnsToken,
     removeApnsToken,
     updateUiVisibility,
+    clearPendingPushBadge: () => clearPendingPushBadge(),
     isUiVisible,
     getUiNotificationClients: () => uiNotificationClients,
     writeSseEvent,
