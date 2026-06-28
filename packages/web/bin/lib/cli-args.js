@@ -88,6 +88,19 @@ function parseArgs(argv = process.argv.slice(2)) {
     foreground: false,
     lan: false,
     apiOnly: false,
+    // Resource command inputs (session/agent/command/mcp/snippet/etc.)
+    title: undefined,
+    message: undefined,
+    content: undefined,
+    description: undefined,
+    template: undefined,
+    agent: undefined,
+    model: undefined,
+    scope: undefined,
+    directory: undefined,
+    prompt: undefined,
+    url: undefined,
+    commandStr: undefined,
   };
 
   const removedFlagErrors = [];
@@ -243,6 +256,84 @@ function parseArgs(argv = process.argv.slice(2)) {
         options.sessionTtl = typeof value === 'string' ? value : options.sessionTtl;
         break;
       }
+      case 'title': {
+        const { value, nextIndex } = consumeValue(i, inlineValue);
+        i = nextIndex;
+        options.title = typeof value === 'string' ? value : '';
+        break;
+      }
+      case 'message':
+      case 'm': {
+        const { value, nextIndex } = consumeValue(i, inlineValue);
+        i = nextIndex;
+        options.message = typeof value === 'string' ? value : options.message;
+        break;
+      }
+      case 'content': {
+        const { value, nextIndex } = consumeValue(i, inlineValue);
+        i = nextIndex;
+        options.content = typeof value === 'string' ? value : options.content;
+        break;
+      }
+      case 'description': {
+        const { value, nextIndex } = consumeValue(i, inlineValue);
+        i = nextIndex;
+        options.description = typeof value === 'string' ? value : options.description;
+        break;
+      }
+      case 'template': {
+        const { value, nextIndex } = consumeValue(i, inlineValue);
+        i = nextIndex;
+        options.template = typeof value === 'string' ? value : options.template;
+        break;
+      }
+      case 'agent': {
+        const { value, nextIndex } = consumeValue(i, inlineValue);
+        i = nextIndex;
+        options.agent = typeof value === 'string' ? value : options.agent;
+        break;
+      }
+      case 'model': {
+        const { value, nextIndex } = consumeValue(i, inlineValue);
+        i = nextIndex;
+        options.model = typeof value === 'string' ? value : options.model;
+        break;
+      }
+      case 'scope': {
+        const { value, nextIndex } = consumeValue(i, inlineValue);
+        i = nextIndex;
+        options.scope = typeof value === 'string' ? value : options.scope;
+        break;
+      }
+      case 'directory':
+      case 'cwd': {
+        const { value, nextIndex } = consumeValue(i, inlineValue);
+        i = nextIndex;
+        options.directory = typeof value === 'string' ? value : options.directory;
+        break;
+      }
+      case 'prompt': {
+        const { value, nextIndex } = consumeValue(i, inlineValue);
+        i = nextIndex;
+        options.prompt = typeof value === 'string' ? value : options.prompt;
+        break;
+      }
+      case 'url': {
+        const { value, nextIndex } = consumeValue(i, inlineValue);
+        i = nextIndex;
+        options.url = typeof value === 'string' ? value : options.url;
+        break;
+      }
+      case 'command': {
+        const { value, nextIndex } = consumeValue(i, inlineValue);
+        i = nextIndex;
+        options.commandStr = typeof value === 'string' ? value : options.commandStr;
+        break;
+      }
+      case 'yes':
+      case 'y':
+        options.force = true;
+        break;
       case 'json':
         options.json = true;
         break;
@@ -353,6 +444,7 @@ function parseArgs(argv = process.argv.slice(2)) {
     subcommand,
     tunnelAction,
     startupAction,
+    positionals: positional,
     options,
     removedFlagErrors,
     helpRequested,
@@ -377,6 +469,19 @@ COMMANDS:
   logs           Tail OpenChamber logs
   connect-url    Generate URL/QR for connecting another client
   update         Check for and install updates
+
+RESOURCE COMMANDS (talk to a running server):
+  session        Manage sessions (list/show/create/rename/archive/share/delete/prompt)
+  agent          Manage agents (list/show/create/delete)
+  command        Manage slash commands (list/show/create/delete)
+  skill          Inspect skills (list/show)
+  mcp            Manage MCP servers (list/show/create/delete)
+  snippet        Manage snippets (list/show/create/delete)
+  provider       Inspect providers and models (list/models)
+  project        List configured projects (list)
+  config         Show OpenChamber settings (get)
+
+  Run 'openchamber <command> --help' for resource command details.
 
 OPTIONS:
   -p, --port              Web server port (default: ${DEFAULT_PORT})
@@ -557,6 +662,153 @@ EXAMPLES:
 `);
 }
 
+const RESOURCE_HELP = {
+  session: `
+ OpenChamber Session Commands
+
+USAGE:
+  openchamber session <ACTION> [ARGS] [OPTIONS]
+
+ACTIONS:
+  list                         List sessions in the current directory
+  show <id>                    Show details for a session
+  create [title]               Create a new session
+  rename <id> <title>          Rename a session
+  archive <id>                 Archive a session
+  unarchive <id>               Restore an archived session
+  share <id>                   Create a public share link
+  unshare <id>                 Remove the public share link
+  delete <id>                  Delete a session (use --force to skip confirm)
+  prompt <id> <message>        Send a prompt to a session
+
+OPTIONS:
+  --directory <path>           Project directory to scope to (default: cwd)
+  --all                        Include archived sessions in list
+  --title <text>               Title for create/rename
+  --message, -m <text>         Message for prompt
+  --model <provider/model>     Model for prompt
+  --provider <id>              Provider for prompt
+  --agent <name>              Agent for prompt (default: build)
+  --force, --yes               Skip delete confirmation
+  --json                       Machine-readable JSON output
+  -q, --quiet                  Minimal output
+
+EXAMPLES:
+  openchamber session list
+  openchamber session create "Investigate flaky test"
+  openchamber session prompt ses_abc "summarize the repo" --model anthropic/claude
+  openchamber session delete ses_abc --force --json
+`,
+  agent: `
+ OpenChamber Agent Commands
+
+USAGE:
+  openchamber agent <ACTION> [ARGS] [OPTIONS]
+
+ACTIONS:
+  list                         List available agents
+  show <name>                  Show agent configuration sources
+  create <name> [prompt]       Create an agent (--prompt, --description, --mode, --model, --scope)
+  delete <name>                Delete an agent (--scope, --force)
+
+EXAMPLES:
+  openchamber agent list
+  openchamber agent create reviewer --description "Code reviewer" --prompt "Review carefully"
+  openchamber agent delete reviewer --scope user --force
+`,
+  command: `
+ OpenChamber Command (slash) Commands
+
+USAGE:
+  openchamber command <ACTION> [ARGS] [OPTIONS]
+
+ACTIONS:
+  list                         List slash commands
+  show <name>                  Show a slash command (incl. template)
+  create <name> [template]     Create a command (--template, --description, --agent, --model, --scope)
+  delete <name>                Delete a command (--force)
+
+EXAMPLES:
+  openchamber command list
+  openchamber command create deploy --template "Deploy the app" --description "Deploy"
+`,
+  skill: `
+ OpenChamber Skill Commands
+
+USAGE:
+  openchamber skill <ACTION> [ARGS] [OPTIONS]
+
+ACTIONS:
+  list                         List available skills
+  show <name>                  Show skill details
+`,
+  mcp: `
+ OpenChamber MCP Server Commands
+
+USAGE:
+  openchamber mcp <ACTION> [ARGS] [OPTIONS]
+
+ACTIONS:
+  list                         List configured MCP servers
+  show <name>                  Show an MCP server
+  create <name>                Create a server (--url <url> | --command "<cmd args>", --scope)
+  delete <name>                Delete a server (--force)
+
+EXAMPLES:
+  openchamber mcp create context7 --url https://mcp.example.com
+  openchamber mcp create local-fs --command "npx -y @modelcontextprotocol/server-filesystem ."
+`,
+  snippet: `
+ OpenChamber Snippet Commands
+
+USAGE:
+  openchamber snippet <ACTION> [ARGS] [OPTIONS]
+
+ACTIONS:
+  list                         List snippets
+  show <name>                  Show a snippet
+  create <name> [content]      Create a snippet (--content, --description, --scope)
+  delete <name>                Delete a snippet (--force)
+`,
+  provider: `
+ OpenChamber Provider Commands
+
+USAGE:
+  openchamber provider <ACTION> [ARGS] [OPTIONS]
+
+ACTIONS:
+  list                         List configured providers
+  models [providerId]          List available models (optionally for one provider)
+`,
+  project: `
+ OpenChamber Project Commands
+
+USAGE:
+  openchamber project list [OPTIONS]
+
+ACTIONS:
+  list                         List configured projects
+`,
+  config: `
+ OpenChamber Config Commands
+
+USAGE:
+  openchamber config get [OPTIONS]
+
+ACTIONS:
+  get                          Show OpenChamber settings (use --json for full settings)
+`,
+};
+
+function showResourceHelp(command) {
+  const help = RESOURCE_HELP[command];
+  if (help) {
+    console.log(help);
+    return;
+  }
+  showHelp();
+}
+
 function generateCompletionScript(shell) {
   const normalized = typeof shell === 'string' ? shell.trim().toLowerCase() : '';
 
@@ -569,7 +821,7 @@ _openchamber_tunnel() {
   cur="\${COMP_WORDS[COMP_CWORD]}"
   prev="\${COMP_WORDS[COMP_CWORD-1]}"
 
-  commands="serve stop restart status tunnel logs update"
+  commands="serve stop restart status tunnel startup logs connect-url update session agent command skill mcp snippet provider project config"
   tunnel_commands="help providers ready doctor status start stop profile completion"
   profile_commands="list show add remove"
   common_flags="--port --foreground --no-daemon --json --all --help --version --plain --quiet"
@@ -624,6 +876,15 @@ _openchamber() {
     'tunnel:Tunnel lifecycle commands'
     'logs:Tail OpenChamber logs'
     'update:Check for and install updates'
+    'session:Manage sessions'
+    'agent:Manage agents'
+    'command:Manage slash commands'
+    'skill:Inspect skills'
+    'mcp:Manage MCP servers'
+    'snippet:Manage snippets'
+    'provider:Inspect providers and models'
+    'project:List projects'
+    'config:Show settings'
   )
 
   tunnel_commands=(
@@ -686,6 +947,15 @@ complete -c openchamber -n '__fish_use_subcommand' -a 'status' -d 'Show server s
 complete -c openchamber -n '__fish_use_subcommand' -a 'tunnel' -d 'Tunnel lifecycle commands'
 complete -c openchamber -n '__fish_use_subcommand' -a 'logs' -d 'Tail logs'
 complete -c openchamber -n '__fish_use_subcommand' -a 'update' -d 'Check for updates'
+complete -c openchamber -n '__fish_use_subcommand' -a 'session' -d 'Manage sessions'
+complete -c openchamber -n '__fish_use_subcommand' -a 'agent' -d 'Manage agents'
+complete -c openchamber -n '__fish_use_subcommand' -a 'command' -d 'Manage slash commands'
+complete -c openchamber -n '__fish_use_subcommand' -a 'skill' -d 'Inspect skills'
+complete -c openchamber -n '__fish_use_subcommand' -a 'mcp' -d 'Manage MCP servers'
+complete -c openchamber -n '__fish_use_subcommand' -a 'snippet' -d 'Manage snippets'
+complete -c openchamber -n '__fish_use_subcommand' -a 'provider' -d 'Inspect providers and models'
+complete -c openchamber -n '__fish_use_subcommand' -a 'project' -d 'List projects'
+complete -c openchamber -n '__fish_use_subcommand' -a 'config' -d 'Show settings'
 
 complete -c openchamber -n '__fish_seen_subcommand_from tunnel; and not __fish_seen_subcommand_from help providers ready doctor status start stop profile completion' -a 'help' -d 'Show tunnel help'
 complete -c openchamber -n '__fish_seen_subcommand_from tunnel; and not __fish_seen_subcommand_from help providers ready doctor status start stop profile completion' -a 'providers' -d 'Show providers'
@@ -721,6 +991,7 @@ export {
   showStartupHelp,
   showConnectUrlHelp,
   showTunnelHelp,
+  showResourceHelp,
   generateCompletionScript,
   findClosestMatch,
 };
