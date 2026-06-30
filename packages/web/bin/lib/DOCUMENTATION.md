@@ -47,8 +47,9 @@ Command modules implement user-facing commands and preserve output contracts acr
   - Receives `serveCommand` and `stopCommand` by dependency injection. Do not reach back into `cli.js` command globals from this module.
 
 - `commands-session.js`
-  - Implements `openchamber session` and its actions: `list`, `show`, `create`, `rename`, `archive`, `unarchive`, `share`, `unshare`, `delete`, and `prompt`.
-  - Mirrors the app's session menu functions by talking to a running instance over HTTP (via `cli-api-client.js`). Scopes to the project directory (`--directory`, default cwd), gates deletion behind confirmation/`--force` in every mode, and preserves `--json`/`--quiet` contracts.
+  - Implements `openchamber session` and its actions: `list`, `show`, `rename`, `archive`, `unarchive`, `share`, `unshare`, and `delete`.
+  - Mirrors the app's session read/mutation menu functions by talking to a running instance over HTTP (via `cli-api-client.js`). Scopes to the project directory (`--directory`, default cwd), gates deletion behind confirmation/`--force` in every mode, and preserves `--json`/`--quiet` contracts.
+  - Session creation and initial-prompt dispatch are intentionally excluded: OpenChamber-owned session orchestration (`/api/openchamber/sessions`) is the source of truth for creating sessions and dispatching the first prompt.
 
 - `commands-resources.js`
   - Implements the config/settings resource commands that mirror the Settings menus: `agent`, `command` (slash commands), `skill`, `mcp`, `snippet`, `provider`, `project`, and `config`.

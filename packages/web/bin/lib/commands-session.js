@@ -8,15 +8,19 @@ import {
   isJsonMode,
   isQuietMode,
   canPrompt,
-  createSpinner,
   printJson,
   logStatus,
 } from '../cli-output.js';
 import { EXIT_CODE, TunnelCliError } from './cli-errors.js';
-import { apiRequest, resolveTargetPort, resolveScopeDirectory, resolveModel } from './cli-api-client.js';
+import { apiRequest, resolveTargetPort, resolveScopeDirectory } from './cli-api-client.js';
 import { truncate, formatRelativeTime, formatModel } from './cli-format.js';
 
-const SESSION_ACTIONS = ['list', 'show', 'create', 'rename', 'archive', 'unarchive', 'share', 'unshare', 'delete', 'prompt'];
+// Session creation and initial-prompt dispatch are intentionally NOT exposed
+// here. OpenChamber-owned session orchestration lives behind
+// /api/openchamber/sessions (separate work) and is the source of truth for
+// creating sessions and optionally dispatching the first prompt. These CLI
+// commands only read and mutate existing sessions.
+const SESSION_ACTIONS = ['list', 'show', 'rename', 'archive', 'unarchive', 'share', 'unshare', 'delete'];
 
 function isArchived(session) {
   const archived = session?.time?.archived;
@@ -28,12 +32,6 @@ function requireSessionId(args, options) {
   if (id) return id;
   if (typeof options.name === 'string' && options.name.trim().length > 0) return options.name.trim();
   throw new TunnelCliError('A session id is required. Usage: openchamber session <action> <session-id>', EXIT_CODE.USAGE_ERROR);
-}
-
-function generateMessageId() {
-  const time = Date.now().toString(16).padStart(12, '0').slice(-12);
-  const random = Math.random().toString(36).slice(2, 10).padEnd(8, '0');
-  return `msg_${time}${random}`;
 }
 
 function serializeSession(session) {
@@ -138,49 +136,6 @@ async function handleShow(port, directory, options, args) {
   if (session?.time?.updated) lines.push(`updated: ${formatRelativeTime(session.time.updated)}`);
   logStatus('neutral', 'details', lines.join('\n'));
   clackOutro('done');
-}
-
-async function resolveTitleForCreate(options, args) {
-  const fromArg = args.join(' ').trim();
-  if (fromArg) return fromArg;
-  if (typeof options.title === 'string' && options.title.trim().length > 0) return options.title.trim();
-  if (canPrompt(options)) {
-    const value = await clackText({
-      message: 'Session title (optional)',
-      placeholder: 'Leave blank for an untitled session',
-    });
-    if (isCancel(value)) {
-      clackCancel('Operation cancelled.');
-      throw new TunnelCliError('Cancelled.', 130);
-    }
-    return typeof value === 'string' ? value.trim() : '';
-  }
-  return '';
-}
-
-async function handleCreate(port, directory, options, args) {
-  const title = await resolveTitleForCreate(options, args);
-  const spin = createSpinner(options);
-  spin?.start('Creating session…');
-  const session = await apiRequest(port, 'POST', '/api/session', {
-    query: { directory },
-    body: title ? { title } : {},
-    options,
-    timeoutMs: 15000,
-  });
-  spin?.stop('Session created');
-
-  if (isJsonMode(options)) {
-    printJson({ created: true, session: serializeSession(session) });
-    return;
-  }
-  if (isQuietMode(options)) {
-    process.stdout.write(`${session.id}\n`);
-    return;
-  }
-  clackIntro('Create Session');
-  logStatus('success', `Created ${session.id}`, session.title ? `title: ${session.title}` : 'untitled');
-  clackOutro(session.id);
 }
 
 async function handleRename(port, directory, options, args) {
@@ -318,54 +273,6 @@ async function handleDelete(port, directory, options, args) {
   clackOutro('done');
 }
 
-async function handlePrompt(port, directory, options, args) {
-  const id = requireSessionId(args, options);
-  let message = args.slice(1).join(' ').trim();
-  if (!message && typeof options.message === 'string') message = options.message.trim();
-  if (!message && canPrompt(options)) {
-    const value = await clackText({ message: 'Prompt to send', placeholder: 'Type your message' });
-    if (isCancel(value)) {
-      clackCancel('Operation cancelled.');
-      throw new TunnelCliError('Cancelled.', 130);
-    }
-    message = typeof value === 'string' ? value.trim() : '';
-  }
-  if (!message) {
-    throw new TunnelCliError('A prompt message is required. Usage: openchamber session prompt <id> <message> (or --message).', EXIT_CODE.USAGE_ERROR);
-  }
-
-  const model = await resolveModel(port, options);
-  const agent = typeof options.agent === 'string' && options.agent.trim() ? options.agent.trim() : 'build';
-  const messageID = generateMessageId();
-
-  const spin = createSpinner(options);
-  spin?.start('Sending prompt…');
-  await apiRequest(port, 'POST', `/api/session/${encodeURIComponent(id)}/message`, {
-    query: { directory },
-    body: {
-      messageID,
-      model,
-      agent,
-      parts: [{ type: 'text', text: message }],
-    },
-    options,
-    timeoutMs: 600000,
-  });
-  spin?.stop('Prompt sent');
-
-  if (isJsonMode(options)) {
-    printJson({ sent: true, id, messageID, model, agent });
-    return;
-  }
-  if (isQuietMode(options)) {
-    process.stdout.write(`${id} ${messageID}\n`);
-    return;
-  }
-  clackIntro('Send Prompt');
-  logStatus('success', `Sent to ${id}`, `${model.providerID}/${model.modelID} · agent ${agent}`);
-  clackOutro(messageID);
-}
-
 async function sessionCommand(options = {}, action = 'list', args = []) {
   const normalizedAction = typeof action === 'string' && action.trim().length > 0 ? action.trim() : 'list';
   if (!SESSION_ACTIONS.includes(normalizedAction)) {
@@ -383,8 +290,6 @@ async function sessionCommand(options = {}, action = 'list', args = []) {
       return handleList(port, directory, options);
     case 'show':
       return handleShow(port, directory, options, args);
-    case 'create':
-      return handleCreate(port, directory, options, args);
     case 'rename':
       return handleRename(port, directory, options, args);
     case 'archive':
@@ -397,8 +302,6 @@ async function sessionCommand(options = {}, action = 'list', args = []) {
       return handleShare(port, directory, options, args, false);
     case 'delete':
       return handleDelete(port, directory, options, args);
-    case 'prompt':
-      return handlePrompt(port, directory, options, args);
     default:
       return undefined;
   }

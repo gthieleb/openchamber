@@ -67,11 +67,6 @@ describe('parseArgs resource flags', () => {
     expect(parsed.positionals).toEqual(['session', 'show', 'ses_abc']);
   });
 
-  it('parses prompt message via -m alias', () => {
-    const parsed = parseArgs(['session', 'prompt', 'ses_abc', '-m', 'hello there']);
-    expect(parsed.options.message).toBe('hello there');
-  });
-
   it('maps --yes to force', () => {
     const parsed = parseArgs(['session', 'delete', 'ses_abc', '--yes']);
     expect(parsed.options.force).toBe(true);

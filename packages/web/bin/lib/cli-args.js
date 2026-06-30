@@ -90,7 +90,6 @@ function parseArgs(argv = process.argv.slice(2)) {
     apiOnly: false,
     // Resource command inputs (session/agent/command/mcp/snippet/etc.)
     title: undefined,
-    message: undefined,
     content: undefined,
     description: undefined,
     template: undefined,
@@ -271,13 +270,6 @@ function parseArgs(argv = process.argv.slice(2)) {
         const { value, nextIndex } = consumeValue(i, inlineValue);
         i = nextIndex;
         options.title = typeof value === 'string' ? value : '';
-        break;
-      }
-      case 'message':
-      case 'm': {
-        const { value, nextIndex } = consumeValue(i, inlineValue);
-        i = nextIndex;
-        options.message = typeof value === 'string' ? value : options.message;
         break;
       }
       case 'content': {
@@ -540,7 +532,7 @@ COMMANDS:
   update         Check for and install updates
 
 RESOURCE COMMANDS (talk to a running server):
-  session        Manage sessions (list/show/create/rename/archive/share/delete/prompt)
+  session        Manage sessions (list/show/rename/archive/share/delete)
   agent          Manage agents (list/show/create/delete)
   command        Manage slash commands (list/show/create/delete)
   skill          Inspect skills (list/show)
@@ -742,32 +734,30 @@ USAGE:
 ACTIONS:
   list                         List sessions in the current directory
   show <id>                    Show details for a session
-  create [title]               Create a new session
   rename <id> <title>          Rename a session
   archive <id>                 Archive a session
   unarchive <id>               Restore an archived session
   share <id>                   Create a public share link
   unshare <id>                 Remove the public share link
   delete <id>                  Delete a session (use --force to skip confirm)
-  prompt <id> <message>        Send a prompt to a session
 
 OPTIONS:
   --directory <path>           Project directory to scope to (default: cwd)
   --all                        Include archived sessions in list
-  --title <text>               Title for create/rename
-  --message, -m <text>         Message for prompt
-  --model <provider/model>     Model for prompt
-  --provider <id>              Provider for prompt
-  --agent <name>              Agent for prompt (default: build)
+  --title <text>               Title for rename
   --force, --yes               Skip delete confirmation
   --json                       Machine-readable JSON output
   -q, --quiet                  Minimal output
 
 EXAMPLES:
   openchamber session list
-  openchamber session create "Investigate flaky test"
-  openchamber session prompt ses_abc "summarize the repo" --model anthropic/claude
+  openchamber session show ses_abc
+  openchamber session rename ses_abc "Investigate flaky test"
   openchamber session delete ses_abc --force --json
+
+NOTE:
+  Session creation and prompt dispatch are handled by OpenChamber session
+  orchestration (/api/openchamber/sessions), not this CLI.
 `,
   agent: `
  OpenChamber Agent Commands
