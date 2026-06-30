@@ -1,0 +1,35 @@
+# gthieleb/openchamber-Setup
+# Override: gh-only Auth, Port-Bind auf localhost + Tailscale-Interface.
+# Diese Datei wird automatisch mit docker-compose.yml gemerged.
+#
+# Port 3001 statt 3000, weil 3000 durch Langfuse belegt ist.
+#
+# Benoetigte Env-Vars in .env:
+#   TAILSCALE_IP          - Tailscale-IPv4 des Hosts (z.B. 100.108.41.111)
+#   OPENCHAMBER_UI_PASSWORD - UI-Passwort (Pflicht, da auf 0.0.0.0 gebindet)
+
+services:
+  openchamber:
+    # Basis-Compose hat "3000:3000" (auf 0.0.0.0). Wir ersetzen es explizit
+    # und binden nur auf localhost + Tailscale-Interface.
+    # Host-Port 3001, Container-Port bleibt 3000 (Docker mappt um).
+    ports: !override
+      - "127.0.0.1:3001:3000"
+      - "${TAILSCALE_IP}:3001:3000"
+
+    # GH-Token-Datei reinmounten (additiv zu Basis-Volumes)
+    volumes:
+      - ./data/gh:/home/openchamber/.config/gh
+      # Provider-Auth mit Host-OC teilen (read-write, Token-Sync).
+      # Beide OpenCode-Instanzen (Host + Container) nutzen dieselben
+      # 4 Token-Dateien. Race-Condition bei gleichzeitigem Refresh
+      # ist akzeptiert (kleine Files, ms-Schreibdauer).
+      - /home/gun/.local/share/opencode/auth.json:/home/openchamber/.local/share/opencode/auth.json
+      - /home/gun/.local/share/opencode/auth-v2.json:/home/openchamber/.local/share/opencode/auth-v2.json
+      - /home/gun/.local/share/opencode/account.json:/home/openchamber/.local/share/opencode/account.json
+      - /home/gun/.local/share/opencode/mcp-auth.json:/home/openchamber/.local/share/opencode/mcp-auth.json
+
+    environment:
+      # OpenCode soll im Container auf allen Interfaces lauschen,
+      # damit der OpenChamber-Server ihn erreich hat.
+      OPENCHAMBER_OPENCODE_HOSTNAME: 0.0.0.0
