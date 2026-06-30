@@ -124,6 +124,11 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
         webView.evaluateJavaScript(js) { result, _ in
             guard let json = result as? String, !json.isEmpty,
                   let defaults = UserDefaults(suiteName: SceneDelegate.widgetAppGroup) else { return }
+            // Only write + reload when the overview actually changed. We write this on every
+            // scene activate/resign; reloading WidgetCenter every time burns the WidgetKit
+            // reload budget and leaves some widgets stale (the snapshot no longer contains a
+            // per-call timestamp, so identical overviews compare equal).
+            if defaults.string(forKey: SceneDelegate.widgetSnapshotKey) == json { return }
             defaults.set(json, forKey: SceneDelegate.widgetSnapshotKey)
             WidgetCenter.shared.reloadAllTimelines()
         }

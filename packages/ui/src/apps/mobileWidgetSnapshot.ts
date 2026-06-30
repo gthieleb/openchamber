@@ -30,8 +30,6 @@ export interface MobileWidgetSnapshot {
   attentionCount: number;
   /** Most-recently-updated top-level sessions, newest first (capped for the medium widget). */
   recentSessions: MobileWidgetSession[];
-  /** Epoch ms when the snapshot was built, so the widget can show "updated N min ago". */
-  updatedAt: number;
 }
 
 const RECENT_LIMIT = 6;
@@ -99,7 +97,7 @@ export const buildMobileWidgetSnapshot = (): MobileWidgetSnapshot => {
     .slice(0, RECENT_LIMIT)
     .map(({ id, title, unread, project }) => ({ id, title, unread, project }));
 
-  return { attentionCount, recentSessions, updatedAt: Date.now() };
+  return { attentionCount, recentSessions };
 };
 
 const SNAPSHOT_GLOBAL_KEY = '__OPENCHAMBER_WIDGET_SNAPSHOT__';

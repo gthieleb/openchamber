@@ -39,7 +39,6 @@ class NotificationService: UNNotificationServiceExtension {
         var snapshot: [String: Any] = [
             "attentionCount": 0,
             "recentSessions": [],
-            "updatedAt": 0,
         ]
         if let json = defaults.string(forKey: Self.snapshotKey),
            let data = json.data(using: .utf8),

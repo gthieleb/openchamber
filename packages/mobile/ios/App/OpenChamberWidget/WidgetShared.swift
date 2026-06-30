@@ -19,9 +19,8 @@ struct WidgetSession: Codable, Identifiable, Hashable {
 struct WidgetSnapshot: Codable {
     let attentionCount: Int
     let recentSessions: [WidgetSession]
-    let updatedAt: Double
 
-    static let empty = WidgetSnapshot(attentionCount: 0, recentSessions: [], updatedAt: 0)
+    static let empty = WidgetSnapshot(attentionCount: 0, recentSessions: [])
 }
 
 enum WidgetStore {
@@ -74,10 +73,13 @@ struct OverviewProvider: TimelineProvider {
     }
 
     func getTimeline(in context: Context, completion: @escaping (Timeline<OverviewEntry>) -> Void) {
-        // The app reloads timelines (WidgetCenter) whenever it writes a fresh snapshot, so a
-        // single entry that never auto-expires is enough — the data is push-driven, not timed.
+        // The app/NSE reload timelines (WidgetCenter) when the snapshot changes, but with several
+        // widgets sharing the app's WidgetKit reload budget iOS can refresh them unevenly and
+        // leave one stale. Ask for a periodic refresh too so every widget independently re-reads
+        // the shared snapshot and converges to the latest state (budget permitting).
         let entry = OverviewEntry(date: Date(), snapshot: WidgetStore.load())
-        completion(Timeline(entries: [entry], policy: .never))
+        let nextRefresh = Date().addingTimeInterval(10 * 60)
+        completion(Timeline(entries: [entry], policy: .after(nextRefresh)))
     }
 }
 
