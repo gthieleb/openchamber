@@ -1,0 +1,62 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: openchamber
+  namespace: openchamber
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: openchamber
+  template:
+    metadata:
+      labels:
+        app: openchamber
+    spec:
+      imagePullSecrets:
+      - name: ghcr-pull-secret
+      containers:
+      - name: openchamber
+        image: ghcr.io/gthieleb/openchamber:latest
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 3000
+          name: http
+        env:
+        - name: OPENCHAMBER_UI_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: openchamber-ui-password
+              key: OPENCHAMBER_UI_PASSWORD
+        - name: OPENCHAMBER_HOST
+          value: "0.0.0.0"
+        volumeMounts:
+        - name: data
+          mountPath: /home/openchamber/.config/openchamber
+          subPath: openchamber
+        - name: data
+          mountPath: /home/openchamber/.local/share/opencode
+          subPath: opencode
+        - name: data
+          mountPath: /home/openchamber/.local/state/opencode
+          subPath: opencode/state
+        - name: data
+          mountPath: /home/openchamber/.config/opencode
+          subPath: opencode/config
+        - name: data
+          mountPath: /home/openchamber/.config/gh
+          subPath: gh
+        - name: data
+          mountPath: /home/openchamber/.ssh
+          subPath: ssh
+        resources:
+          requests:
+            cpu: 500m
+            memory: 1Gi
+          limits:
+            cpu: 2
+            memory: 4Gi
+      volumes:
+      - name: data
+        persistentVolumeClaim:
+          claimName: openchamber-data

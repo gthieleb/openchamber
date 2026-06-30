@@ -1,0 +1,21 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: openchamber
+  namespace: openchamber
+spec:
+  ingressClassName: tailscale
+  rules:
+  - host: openchamber.tail6a9722.ts.net
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: openchamber
+            port:
+              number: 3000
+  tls:
+  - hosts:
+    - openchamber.tail6a9722.ts.net
